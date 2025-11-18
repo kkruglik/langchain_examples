@@ -22,11 +22,19 @@ def scrape_article(url: str) -> str:
 
     for paragraph in soup.find_all("p"):
         text = paragraph.get_text(strip=True)
-        if text and len(text) > 20:  # Filter out very short paragraphs
-            content_parts.append(text)
+        content_parts.append(text)
 
     article_text = "\n\n".join(content_parts)
 
     article_text = "\n".join(line.strip() for line in article_text.splitlines() if line.strip())
 
-    return article_text if article_text else soup.get_text(strip=True)
+    article_text = str({"article_text": article_text, "url": url})
+
+    return article_text
+
+
+@tool
+def get_script_length(script: str) -> dict:
+    """Get length of script in symbols and words."""
+    print(f"Tool call: get_script_length({script})")
+    return {"total_symbols": len(script), "total_words": len(script.split())}
