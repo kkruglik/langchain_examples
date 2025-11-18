@@ -25,7 +25,7 @@
 
 ## High Priority
 
-- [ ] **Fix approval flag persistence bug**
+- [x] **Fix approval flag persistence bug**
   - Flags don't reset when user provides new feedback
   - Current behavior: editor_approved=True persists across user iterations
   - Result: New user requests skip editor and go straight to factchecker
@@ -43,13 +43,6 @@
   - FactChecker: gpt-4o with temperature=0 (deterministic)
   - Cost optimization: ~47% cheaper than all gpt-4o
   - Note: Currently all use gpt-5-mini (placeholder)
-
-- [ ] **Better scraper**
-  - Handle dynamic content (JavaScript-rendered pages)
-  - Extract metadata (author, date, source)
-  - Better content filtering (remove ads, sidebars)
-  - Support for different news site formats
-  - Readability.js integration
 
 ## Medium Priority
 
