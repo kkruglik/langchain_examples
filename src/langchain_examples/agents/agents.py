@@ -3,14 +3,12 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from ..tools.scrapers import scrape_article
-from .models import EditorOutput, FactCheckerOutput, WriterOutput
+from .models import EditorOutput, FactCheckerOutput
 from .prompts import EDITOR_PROMPT, FACTCHECKER_PROMPT, WRITER_PROMPT
 from .state import PipelineState
 
 tools = [scrape_article]
 tools_by_name = {tool.name: tool for tool in tools}
-
-# writer_llm = create_agent("openai:gpt-5-mini", temperature=0.7, tools=tools)
 
 writer_llm = ChatOpenAI(model="gpt-5-mini", temperature=0.7)
 writer_llm = writer_llm.bind_tools(tools)
@@ -22,7 +20,23 @@ factchecker_llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
 factchecker_llm = factchecker_llm.with_structured_output(FactCheckerOutput)
 
 
-def user_input_node(state: PipelineState) -> dict:
+def tool_node(state: PipelineState) -> dict:
+    """Performs the tool call and updates article content."""
+
+    result_messages = []
+    new_article_content = []
+
+    for tool_call in state["messages"][-1].tool_calls:
+        tool = tools_by_name[tool_call["name"]]
+        observation = tool.invoke(tool_call["args"])
+
+        result_messages.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+        new_article_content.append(observation)
+
+    return {"messages": result_messages, "article_content": new_article_content}
+
+
+def user_node(state: PipelineState) -> dict:
     """Get user input."""
     if state["drafts"]:
         print("Here is the last draft:")
@@ -40,62 +54,49 @@ def user_input_node(state: PipelineState) -> dict:
     }
 
 
-def writer_agent(state: PipelineState) -> dict:
+def writer_node(state: PipelineState) -> dict:
     """Generate script from article."""
     print(f"Writer: iteration {state['iteration']}")
 
-    messages = [SystemMessage(content=WRITER_PROMPT)] + state["messages"]
+    prompt = ChatPromptTemplate([("system", WRITER_PROMPT), ("placeholder", "{messages}")])
+    chain = prompt | writer_llm
 
-    if state["article_content"]:
-        article_text = "\n\n--- Additional Source ---\n".join(state["article_content"])
-        messages.append(HumanMessage(content=f"Article:\n{article_text}"))
+    response = chain.invoke({"messages": state["messages"]})
 
-    tool_result = None
-
-    while True:
-        response = writer_llm.invoke(messages)
-        messages.append(response)
-
-        if response.tool_calls:
-            for tool_call in response.tool_calls:
-                print(f"→ Tool call: {tool_call['name']} with args {tool_call['args']}")
-                tool = tools_by_name[tool_call["name"]]
-                tool_result = tool.invoke(tool_call["args"])
-
-                messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_call["id"]))
-
-            continue
-
-        content = response.content
-        script = ""
-
-        if "REASONING:" in content and "SCRIPT:" in content:
-            parts = content.split("SCRIPT:")
-            script = parts[1].strip()
-        else:
-            script = content
-
-        writer_message = AIMessage(content=response.content, name="writer")
-
+    if response.tool_calls:
+        print(f"→ Writer wants to call tools: {[tc['name'] for tc in response.tool_calls]}")
         return {
-            "messages": [writer_message],
-            "drafts": [script],
-            "iteration": state["iteration"] + 1,
-            "article_content": [tool_result] if tool_result else [],
+            "messages": [response],
         }
 
+    content = response.content
+    script = ""
 
-def editor_agent(state: PipelineState) -> dict:
+    if "REASONING:" in content and "SCRIPT:" in content:
+        parts = content.split("SCRIPT:")
+        script = parts[1].strip()
+    else:
+        script = content
+
+    writer_message = AIMessage(content=response.content, name="writer")
+
+    return {
+        "messages": [writer_message],
+        "drafts": [script],
+        "iteration": state["iteration"] + 1,
+    }
+
+
+def editor_node(state: PipelineState) -> dict:
     """Review script for quality."""
     print("Editor: reviewing script")
 
-    article_text = "\n\n--- Additional Source ---\n".join(state["article_content"]) if state["article_content"] else ""
+    messages = [m for m in state["messages"] if getattr(m, "name", None) != "factchecker"]
 
     prompt = ChatPromptTemplate(
         [
             ("system", EDITOR_PROMPT),
             ("placeholder", "{messages}"),
-            ("human", "Article: {article_text}\n\nScript to review:\n{draft}"),
         ]
     )
 
@@ -103,9 +104,7 @@ def editor_agent(state: PipelineState) -> dict:
 
     response: EditorOutput = chain.invoke(
         {
-            "article_text": article_text,
-            "draft": state["drafts"][-1],
-            "messages": state["messages"],
+            "messages": messages,
         }
     )
 
@@ -117,17 +116,18 @@ def editor_agent(state: PipelineState) -> dict:
         return {"messages": [feedback_message], "editor_approved": False}
 
 
-def factchecker_agent(state: PipelineState) -> dict:
+def factchecker_node(state: PipelineState) -> dict:
     """Check facts in script."""
     print("FactChecker: verifying facts")
 
-    article_text = "\n\n--- Additional Source ---\n".join(state["article_content"]) if state["article_content"] else ""
+    messages = [
+        m for m in state["messages"] if not isinstance(m, HumanMessage) and getattr(m, "name", None) != "editor"
+    ]
 
     prompt = ChatPromptTemplate(
         [
             ("system", FACTCHECKER_PROMPT),
             ("placeholder", "{messages}"),
-            ("human", "Article: {article_text}\n\nScript to verify:\n{draft}"),
         ]
     )
 
@@ -135,9 +135,7 @@ def factchecker_agent(state: PipelineState) -> dict:
 
     response: FactCheckerOutput = chain.invoke(
         {
-            "article_text": article_text,
-            "draft": state["drafts"][-1],
-            "messages": state["messages"],
+            "messages": messages,
         }
     )
 
