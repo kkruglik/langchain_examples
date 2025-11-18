@@ -12,6 +12,7 @@ dependencies = [
   "langchain>=0.3.27",
   "langchain-openai>=0.3.35",
   "langgraph>=0.6.10",
+  "langgraph-checkpoint-sqlite>=3.0.0",
   "openai>=2.4.0",
   "python-dotenv>=1.1.1",
 ]
