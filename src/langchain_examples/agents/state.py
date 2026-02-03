@@ -12,3 +12,6 @@ class PipelineState(TypedDict):
     editor_approved: bool
     factchecker_approved: bool
     user_approved: bool
+    next_agent: str  # For supervisor routing: "writer", "editor", "factchecker", "finish"
+    last_agent: str  # Track which agent is waiting for tool results
+    node_transitions: dict[str, int]  # Track node communication counts: "from→to" -> count

@@ -4,12 +4,8 @@ from pydantic import BaseModel, Field
 class WriterOutput(BaseModel):
     """Output from the Writer agent containing reasoning and the video script."""
 
-    reasoning: str = Field(
-        description="Your thinking process - which angle you chose and why. Explain the newsworthy angle selected and rationale."
-    )
-    draft: str = Field(
-        description="The actual video script - 700-1000 characters. Professional news media style with strong opening hook, clear facts, and journalistic tone."
-    )
+    reasoning: str = Field(description="Ваш мыслительный процесс согласно структуре из промпта")
+    draft: str = Field(description="Полный текст видеосценария")
 
 
 class EditorOutput(BaseModel):
@@ -31,4 +27,13 @@ class FactCheckerOutput(BaseModel):
     )
     feedback: str = Field(
         description="If verified: confirmation that facts are accurate. If issues found: list specific facts not in article, distorted facts, or unsupported claims."
+    )
+
+
+class SupervisorOutput(BaseModel):
+    """Supervisor's routing decision."""
+
+    reasoning: str = Field(description="Brief explanation of why this agent should be called next")
+    next_agent: str = Field(
+        description="The next agent to call: 'researcher', 'swarm', 'writer', 'editor', 'factchecker', or 'finish'"
     )
