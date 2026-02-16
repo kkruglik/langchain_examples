@@ -1,4 +1,5 @@
 import json
+import os
 import signal
 import sqlite3
 import sys
@@ -8,16 +9,26 @@ from pathlib import Path
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
-from .agents.nodes import editor_node, factchecker_node, tool_node, user_node, writer_node
+from .agents.nodes import (
+    editor_node,
+    factchecker_node,
+    researcher_node,
+    swarm_node,
+    tool_node,
+    user_node,
+    writer_node,
+)
 from .agents.routes import (
     route_after_editor,
     route_after_factchecker,
+    route_after_researcher,
     route_after_tool,
     route_after_user_input,
     route_after_writer,
 )
 from .agents.state import PipelineState
-from .display import show_final_script
+from .config import DEFAULT_CONFIG, agents_config as loaded_agents_config
+from .display import show_config, show_final_script, show_node_stats, show_previous_state
 from .logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -33,23 +44,20 @@ def main():
     setup_logging()
     signal.signal(signal.SIGINT, signal_handler)
 
+    config_file = os.getenv("CONFIG_FILE", DEFAULT_CONFIG)
+    show_config(config_file, loaded_agents_config)
+
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
-
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = data_dir / "runs" / run_id
-    run_dir.mkdir(exist_ok=True, parents=True)
 
     conn = sqlite3.connect(str(data_dir / "checkpoints.db"), check_same_thread=False)
     memory = SqliteSaver(conn)
 
-    pipeline_filename = run_dir / "pipeline_result.json"
-    graph_filename = run_dir / "pipeline_graph.png"
-    script_filename = run_dir / "final_script.txt"
-
     graph = StateGraph(PipelineState)
 
     graph.add_node("user_input_node", user_node)
+    graph.add_node("researcher_agent", researcher_node)
+    graph.add_node("swarm_agent", swarm_node)
     graph.add_node("writer_agent", writer_node)
     graph.add_node("editor_agent", editor_node)
     graph.add_node("factchecker_agent", factchecker_node)
@@ -57,18 +65,24 @@ def main():
 
     graph.add_edge(START, "user_input_node")
 
-    graph.add_conditional_edges("user_input_node", route_after_user_input, {"continue": "writer_agent", "end": END})
+    graph.add_conditional_edges(
+        "user_input_node",
+        route_after_user_input,
+        {"to_researcher": "researcher_agent", "to_writer": "writer_agent", "end": END},
+    )
 
     graph.add_conditional_edges(
-        "tools",
-        route_after_tool,
-        {"to_writer": "writer_agent", "to_editor": "editor_agent", "to_factchecker": "factchecker_agent"},
+        "researcher_agent",
+        route_after_researcher,
+        {"tool_use": "tools", "done": "swarm_agent"},
     )
+
+    graph.add_edge("swarm_agent", "writer_agent")
 
     graph.add_conditional_edges(
         "writer_agent",
         route_after_writer,
-        {"skip_editor": "factchecker_agent", "to_editor": "editor_agent", "tool_use": "tools"},
+        {"to_editor": "editor_agent", "to_factchecker": "factchecker_agent"},
     )
 
     graph.add_conditional_edges(
@@ -83,7 +97,43 @@ def main():
         {"verified": "user_input_node", "rejected": "writer_agent", "tool_use": "tools"},
     )
 
+    graph.add_conditional_edges(
+        "tools",
+        route_after_tool,
+        {"to_editor": "editor_agent", "to_factchecker": "factchecker_agent", "to_researcher": "researcher_agent"},
+    )
+
     app = graph.compile(checkpointer=memory)
+
+    prev_thread_id = input("Enter previous run ID (blank for new run): ").strip()
+
+    if prev_thread_id:
+        run_id = prev_thread_id
+        thread_config = {
+            "configurable": {"thread_id": prev_thread_id},
+            "recursion_limit": 100,
+        }
+        current_state = app.get_state(thread_config)
+        if not current_state.values:
+            logger.error("Previous run not found: %s", prev_thread_id)
+            sys.exit(1)
+        logger.info("Resuming previous run: %s", prev_thread_id)
+        show_previous_state(current_state.values)
+        app.update_state(thread_config, {"user_approved": False}, as_node="user_input_node")
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        thread_config = {
+            "configurable": {"thread_id": run_id},
+            "recursion_limit": 100,
+        }
+        logger.info("Starting new run: %s", run_id)
+
+    run_dir = data_dir / "runs" / run_id
+    run_dir.mkdir(exist_ok=True, parents=True)
+
+    pipeline_filename = run_dir / "pipeline_result.json"
+    graph_filename = run_dir / "pipeline_graph.png"
+    script_filename = run_dir / "final_script.md"
 
     try:
         graph_image = app.get_graph().draw_mermaid_png()
@@ -93,26 +143,10 @@ def main():
     except Exception as e:
         logger.warning("Could not save graph visualization: %s", e)
 
-    prev_thread_id = input("Enter previous run ID (blank for new run): ")
-
     try:
         if prev_thread_id:
-            thread_config = {
-                "configurable": {"thread_id": prev_thread_id},
-                "recursion_limit": 30,
-            }
-            current_state = app.get_state(thread_config)
-            if current_state.values:
-                logger.info("Resuming previous run: %s", prev_thread_id)
-                result = app.invoke(None, config=thread_config)
-            else:
-                logger.error("Previous run not found: %s", prev_thread_id)
-                sys.exit(1)
+            result = app.invoke(None, config=thread_config)
         else:
-            thread_config = {
-                "configurable": {"thread_id": run_id},
-                "recursion_limit": 30,
-            }
             result = app.invoke(
                 {
                     "messages": [],
@@ -124,6 +158,9 @@ def main():
                     "user_approved": False,
                     "next_agent": "",
                     "last_agent": "",
+                    "node_transitions": {},
+                    "editor_iteration": 0,
+                    "factchecker_iteration": 0,
                 },
                 config=thread_config,
             )
@@ -146,6 +183,9 @@ def main():
         with open(script_filename, "w", encoding="utf-8") as f:
             f.write(final_script)
         logger.info("Final script saved to: %s", script_filename)
+
+    if result.get("node_transitions"):
+        show_node_stats(result["node_transitions"])
 
 
 if __name__ == "__main__":

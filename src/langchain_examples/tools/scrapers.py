@@ -60,7 +60,6 @@ def scrape_telegram_post(url: str) -> str:
     return str({"article_text": article_text, "url": url})
 
 
-MAX_CONTENT_LENGTH = 15000
 
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -104,13 +103,6 @@ def _get_headers(url: str = "") -> dict:
 def _random_delay():
     """Small random delay to mimic human behavior."""
     time.sleep(random.uniform(0.3, 1.2))
-
-
-def _truncate(text: str, max_length: int = MAX_CONTENT_LENGTH) -> str:
-    """Truncate text to max length."""
-    if len(text) <= max_length:
-        return text
-    return text[:max_length] + "\n\n[... truncated ...]"
 
 
 def _extract_content(soup: BeautifulSoup) -> str:
@@ -169,7 +161,7 @@ def scrape_article(url: str) -> str:
         if not content:
             return f"Error: Could not extract content from {url}"
 
-        return f"Source: {url}\n\n{_truncate(content)}"
+        return f"Source: {url}\n\n{content}"
 
     except httpx.HTTPStatusError as e:
         return f"Error: HTTP {e.response.status_code} for {url}"

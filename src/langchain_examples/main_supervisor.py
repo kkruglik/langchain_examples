@@ -1,4 +1,5 @@
 import json
+import os
 import signal
 import sqlite3
 import sys
@@ -27,7 +28,8 @@ from .agents.routes import (
     route_after_user_input,
 )
 from .agents.state import PipelineState
-from .display import show_final_script, show_node_stats, show_previous_state
+from .config import DEFAULT_CONFIG, agents_config as loaded_agents_config
+from .display import show_config, show_final_script, show_node_stats, show_previous_state
 from .logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -42,6 +44,9 @@ def signal_handler(sig, frame):
 def main():
     setup_logging()
     signal.signal(signal.SIGINT, signal_handler)
+
+    config_file = os.getenv("CONFIG_FILE", DEFAULT_CONFIG)
+    show_config(config_file, loaded_agents_config)
 
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)

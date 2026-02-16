@@ -1,7 +1,10 @@
+import os
+from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
 from typing import Annotated
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
@@ -10,15 +13,31 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+load_dotenv()
+
 CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
+DEFAULT_CONFIG = "config/base-openai-mini.yaml"
+
+
+class ModelProvider(StrEnum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GOOGLE = "google"
+
+
+class ModelConfig(BaseModel):
+    name: str
+    temperature: float
+    provider: ModelProvider
+    max_tokens: int | None = None
+    max_retries: int = 2
 
 
 class AgentConfig(BaseModel):
     """Config for individual agent. Loaded from YAML."""
 
-    model: str = "gpt-5-mini"
-    temperature: float = 0.3
     prompt_path: str = ""
+    model: ModelConfig
 
     @cached_property
     def prompt(self) -> str:
@@ -34,12 +53,12 @@ class AgentConfig(BaseModel):
 class AgentsConfig(BaseModel):
     """All agent configs. Nested under 'agents' key in YAML."""
 
-    supervisor: AgentConfig = AgentConfig(temperature=0.3)
-    writer: AgentConfig = AgentConfig(temperature=0.7)
-    editor: AgentConfig = AgentConfig(temperature=0.5)
-    factchecker: AgentConfig = AgentConfig(temperature=0.2)
-    researcher: AgentConfig = AgentConfig(temperature=0.3)
-    swarm_writer: AgentConfig = AgentConfig(temperature=0.8)
+    supervisor: AgentConfig
+    writer: AgentConfig
+    editor: AgentConfig
+    factchecker: AgentConfig
+    researcher: AgentConfig
+    swarm_writer: AgentConfig
 
 
 class Config(BaseSettings):
@@ -48,12 +67,14 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        yaml_file="config/base.yaml",
+        yaml_file=os.getenv("CONFIG_FILE", DEFAULT_CONFIG),
         extra="ignore",
     )
 
-    openai_api_key: Annotated[str, Field(alias="OPENAI_API_KEY")]
-    agents: AgentsConfig = AgentsConfig()
+    openai_api_key: Annotated[str | None, Field(default=None, alias="OPENAI_API_KEY")]
+    anthropic_api_key: Annotated[str | None, Field(default=None, alias="ANTHROPIC_API_KEY")]
+    google_api_key: Annotated[str | None, Field(default=None, alias="GOOGLE_API_KEY")]
+    agents: AgentsConfig
 
     @classmethod
     def settings_customise_sources(

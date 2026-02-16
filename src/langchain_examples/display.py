@@ -32,8 +32,10 @@ def processing(agent: str):
         yield
 
 
-def show_agent_output(agent: str, content: str, approved: bool | None = None) -> None:
+def show_agent_output(agent: str, content: str | list, approved: bool | None = None) -> None:
     """Display agent output in a styled panel."""
+    if isinstance(content, list):
+        content = "\n".join(str(part) for part in content)
     colors = {
         "writer": "blue",
         "editor": "yellow",
@@ -124,6 +126,25 @@ def show_node_stats(transitions: dict[str, int]) -> None:
 
     total = sum(transitions.values())
     console.print(f"\n  [dim]Total transitions: {total}[/dim]")
+
+
+def show_config(config_file: str, agents_config) -> None:
+    """Display loaded config summary to console."""
+    console.print()
+    console.print(f"[bold cyan]Config:[/bold cyan] {config_file}")
+    console.print()
+
+    for agent_name in ["supervisor", "writer", "editor", "factchecker", "researcher", "swarm_writer"]:
+        agent_cfg = getattr(agents_config, agent_name)
+        model = agent_cfg.model
+        console.print(
+            f"  [bold]{agent_name:<15}[/bold] "
+            f"model=[green]{model.provider}:{model.name}[/green] "
+            f"temp={model.temperature} "
+            f"prompt=[dim]{agent_cfg.prompt_path or 'none'}[/dim]"
+        )
+
+    console.print()
 
 
 def show_previous_state(state_values: dict) -> None:
