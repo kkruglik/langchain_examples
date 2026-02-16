@@ -1,0 +1,42 @@
+agents:
+  supervisor:
+    model:
+      provider: openai
+      name: gpt-5-mini-2025-08-07
+      temperature: 0.1
+    prompt_path: prompts/supervisor/v2.md
+
+  writer:
+    model:
+      provider: openai
+      name: gpt-5-mini-2025-08-07
+      temperature: 0.5
+    prompt_path: prompts/writer/v4.md
+
+  editor:
+    model:
+      provider: openai
+      name: gpt-5-mini-2025-08-07
+      temperature: 0.7
+    prompt_path: prompts/editor/v2.md
+
+  factchecker:
+    model:
+      provider: openai
+      name: gpt-5-mini
+      temperature: 0.1
+    prompt_path: prompts/factchecker/v2.md
+
+  researcher:
+    model:
+      provider: openai
+      name: gpt-5-mini
+      temperature: 0.3
+    prompt_path: prompts/researcher/v1.md
+
+  swarm_writer:
+    model:
+      provider: openai
+      name: gpt-5-mini
+      temperature: 0.8
+    prompt_path: prompts/swarm_writer/v1.md
