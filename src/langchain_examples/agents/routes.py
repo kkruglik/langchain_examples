@@ -8,31 +8,44 @@ def _has_tool_calls(state) -> bool:
 
 
 def route_after_user_input(state):
-    """Route to writer if user wants to continue, otherwise end."""
-    return "continue" if not state["user_approved"] else "end"
+    """Route: end / to_researcher (first run) / to_writer (feedback loop)."""
+    if state["user_approved"]:
+        return "end"
+    if state["drafts"]:
+        return "to_writer"
+    return "to_researcher"
+
+
+def route_after_researcher(state):
+    """Route: tool_use if tool calls, else done (to swarm)."""
+    if _has_tool_calls(state):
+        return "tool_use"
+    return "done"
 
 
 def route_after_writer(state):
-    """Route to supervisor (writer no longer has tools)."""
-    return "to_supervisor"
+    """Route: to_editor (editor loop) or to_factchecker (factchecker loop)."""
+    if state["editor_approved"]:
+        return "to_factchecker"
+    return "to_editor"
 
 
 def route_after_editor(state):
-    """Route to tool_node if tool calls, else based on approval."""
+    """Route: tool_use / approved (max 4 iterations) / rejected."""
     if _has_tool_calls(state):
         return "tool_use"
-    if state["editor_approved"] or state["iteration"] >= 10:
+    if state["editor_approved"] or state.get("editor_iteration", 0) >= 4:
         return "approved"
     return "rejected"
 
 
 def route_after_factchecker(state):
-    """Route to tool_node if tool calls, else based on approval."""
+    """Route: tool_use / verified (max 3 iterations) / rejected."""
     if _has_tool_calls(state):
         return "tool_use"
-    if state["iteration"] >= 5:
+    if state["factchecker_approved"] or state.get("factchecker_iteration", 0) >= 3:
         return "verified"
-    return "verified" if state["factchecker_approved"] else "rejected"
+    return "rejected"
 
 
 def route_after_tool(state):

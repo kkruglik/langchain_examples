@@ -31,6 +31,67 @@ from .models import SupervisorOutput, WriterOutput
 logger = get_logger(__name__)
 
 
+def _ensure_str(content) -> str:
+    """Normalize LLM response content to string. Gemini can return content as:
+    - str (normal)
+    - list of str/dict parts (multi-part response)
+    - dict with 'text' key
+    Grounding metadata dicts (with 'signature'/'extras') are filtered out."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        if "text" in content:
+            return content["text"]
+        if "signature" in content or "extras" in content:
+            return ""
+        return str(content)
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            text = _ensure_str(part)
+            if text:
+                parts.append(text)
+        result = "\n".join(parts)
+        if not result:
+            logger.warning(
+                "_ensure_str: all %d parts filtered out, types: %s", len(content), [type(p).__name__ for p in content]
+            )
+        return result
+    return str(content)
+
+
+def _log_state(state: PipelineState, node_name: str) -> None:
+    """Log current state snapshot for debugging."""
+    logger.debug(
+        "[%s] State: iteration=%d, editor_approved=%s, factchecker_approved=%s, "
+        "total_messages=%d, total_drafts=%d, last_agent=%s",
+        node_name,
+        state["iteration"],
+        state["editor_approved"],
+        state["factchecker_approved"],
+        len(state["messages"]),
+        len(state["drafts"]),
+        state.get("last_agent", "none"),
+    )
+
+
+def _log_messages(messages: list, node_name: str) -> None:
+    """Log full messages that agent will receive."""
+    logger.debug("[%s] %d messages:", node_name, len(messages))
+    for i, msg in enumerate(messages):
+        name = getattr(msg, "name", None) or type(msg).__name__
+        tool_calls = getattr(msg, "tool_calls", None)
+        logger.debug(
+            "[%s] [%d] %s | tool_calls=%s | content_type=%s | content=%s",
+            node_name,
+            i,
+            name,
+            [tc["name"] for tc in tool_calls] if tool_calls else None,
+            type(msg.content).__name__,
+            repr(msg.content)[:1000],
+        )
+
+
 def track_transition(state: PipelineState, current_node: str) -> dict[str, int]:
     """Track node transition and return updated transitions dict."""
     transitions = dict(state.get("node_transitions") or {})
@@ -66,9 +127,14 @@ def normalize_url(url: str) -> str:
 def tool_node(state: PipelineState) -> dict:
     """Execute tool calls and return results as messages."""
     transitions = track_transition(state, "tools")
+    _log_state(state, "tools")
+    tool_calls = state["messages"][-1].tool_calls
+    logger.debug(
+        "[tools] %d tool calls from %s: %s", len(tool_calls), state.get("last_agent"), [tc["name"] for tc in tool_calls]
+    )
     result_messages = []
 
-    for tool_call in state["messages"][-1].tool_calls:
+    for tool_call in tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
 
@@ -86,6 +152,7 @@ def tool_node(state: PipelineState) -> dict:
 def user_node(state: PipelineState) -> dict:
     """Get user input - text content, feedback, or message with URLs."""
     transitions = track_transition(state, "user")
+    _log_state(state, "user")
     has_drafts = bool(state["drafts"])
 
     if has_drafts:
@@ -118,6 +185,8 @@ def user_node(state: PipelineState) -> dict:
         "article_content": article_content,
         "editor_approved": False,
         "factchecker_approved": False,
+        "editor_iteration": 0,
+        "factchecker_iteration": 0,
         "node_transitions": transitions,
         "last_agent": "user",
     }
@@ -126,21 +195,42 @@ def user_node(state: PipelineState) -> dict:
 def writer_node(state: PipelineState) -> dict:
     """Generate script from article."""
     transitions = track_transition(state, "writer")
+    _log_state(state, "writer")
     logger.info("Writer: iteration %d", state["iteration"])
 
-    messages = filter_messages(
-        state["messages"],
-        [
-            {"agent": "human", "count": 1},
-            {"agent": "researcher", "count": 1},
-            {"agent": "swarm", "count": 1},
-            {"agent": "writer", "count": 2},
-            {"agent": "editor", "count": 2},
-            {"agent": "factchecker", "count": 1},
-        ],
-    )
+    if state["last_agent"] == "editor":
+        messages = filter_messages(
+            state["messages"],
+            [
+                {"agent": "human", "count": 1},
+                {"agent": "researcher", "count": 1},
+                {"agent": "swarm", "count": 1},
+                {"agent": "writer", "count": 5},
+                {"agent": "editor", "count": 5},
+            ],
+        )
 
-    logger.debug(f"Filtered messages: {messages}")
+    elif state["last_agent"] == "factchecker":
+        messages = filter_messages(
+            state["messages"],
+            [
+                {"agent": "human", "count": 1},
+                {"agent": "writer", "count": 5},
+                {"agent": "factchecker", "count": 5},
+            ],
+        )
+
+    else:
+        messages = filter_messages(
+            state["messages"],
+            [
+                {"agent": "human", "count": 1},
+                {"agent": "researcher", "count": 1},
+                {"agent": "swarm", "count": 1},
+            ],
+        )
+
+    _log_messages(messages, "writer")
 
     prompt = ChatPromptTemplate([("system", agents_config.writer.prompt), ("placeholder", "{messages}")])
     chain = prompt | writer_llm
@@ -153,7 +243,7 @@ def writer_node(state: PipelineState) -> dict:
     new_iteration = state["iteration"] + 1
     show_draft(response.draft, new_iteration)
 
-    writer_message = AIMessage(content=f"{response.reasoning}\n\n---\n\n{response.draft}", name="writer")
+    writer_message = AIMessage(content=response.draft, name="writer")
 
     return {
         "messages": [writer_message],
@@ -167,6 +257,7 @@ def writer_node(state: PipelineState) -> dict:
 def editor_node(state: PipelineState) -> dict:
     """Review script for quality."""
     transitions = track_transition(state, "editor")
+    _log_state(state, "editor")
     logger.info("Editor: reviewing script")
 
     messages = filter_messages(
@@ -177,6 +268,8 @@ def editor_node(state: PipelineState) -> dict:
             {"agent": "editor", "count": 1},
         ],
     )
+
+    _log_messages(messages, "editor")
 
     prompt = ChatPromptTemplate(
         [
@@ -190,13 +283,18 @@ def editor_node(state: PipelineState) -> dict:
     with processing("editor"):
         response = chain.invoke({"messages": messages})
 
+    logger.debug(
+        "[editor] Raw response content type=%s, value=%s", type(response.content).__name__, repr(response.content)[:500]
+    )
+
     if response.tool_calls:
-        response = AIMessage(content=response.content, tool_calls=response.tool_calls, name="editor")
+        response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="editor")
         logger.info("Editor wants to call tools: %s", [tc["name"] for tc in response.tool_calls])
         return {"messages": [response], "last_agent": "editor", "node_transitions": transitions}
 
-    content = response.content
+    content = _ensure_str(response.content)
     approved = "APPROVED" in content.upper() and "REJECTED" not in content.upper()
+    logger.debug("[editor] Verdict: %s, content_length=%d", "APPROVED" if approved else "REJECTED", len(content))
 
     feedback_message = AIMessage(content=content, name="editor")
     show_agent_output("editor", content, approved=approved)
@@ -204,6 +302,7 @@ def editor_node(state: PipelineState) -> dict:
     return {
         "messages": [feedback_message],
         "editor_approved": approved,
+        "editor_iteration": state.get("editor_iteration", 0) + 1,
         "node_transitions": transitions,
         "last_agent": "editor",
     }
@@ -212,24 +311,32 @@ def editor_node(state: PipelineState) -> dict:
 def factchecker_node(state: PipelineState) -> dict:
     """Check facts in script."""
     transitions = track_transition(state, "factchecker")
+    _log_state(state, "factchecker")
     logger.info("FactChecker: verifying facts")
 
     messages = []
 
-    # Article content (source of truth) - not in message history
     if state["article_content"]:
         article_text = "\n\n---\n\n".join(state["article_content"])
         messages.append(SystemMessage(content=f"Source article to verify facts against:\n\n{article_text}"))
-
-    messages.extend(
-        filter_messages(
-            state["messages"],
-            [
-                {"agent": "writer", "count": 1},
-                {"agent": "factchecker", "count": 1},
-            ],
+        logger.debug(
+            "[factchecker] Article content: %d sources, total %d chars",
+            len(state["article_content"]),
+            len(article_text),
         )
+
+    filtered = filter_messages(
+        state["messages"],
+        [
+            {"agent": "human", "count": 1},
+            {"agent": "writer", "count": 1},
+            {"agent": "researcher", "count": 1},
+            {"agent": "factchecker", "count": 20},
+        ],
     )
+    messages.extend(filtered)
+
+    _log_messages(messages, "factchecker")
 
     prompt = ChatPromptTemplate(
         [
@@ -244,12 +351,13 @@ def factchecker_node(state: PipelineState) -> dict:
         response = chain.invoke({"messages": messages})
 
     if response.tool_calls:
-        response = AIMessage(content=response.content, tool_calls=response.tool_calls, name="factchecker")
+        response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="factchecker")
         logger.info("FactChecker wants to call tools: %s", [tc["name"] for tc in response.tool_calls])
         return {"messages": [response], "last_agent": "factchecker", "node_transitions": transitions}
 
-    content = response.content
+    content = _ensure_str(response.content)
     approved = "APPROVED" in content.upper() and "REJECTED" not in content.upper()
+    logger.debug("[factchecker] Verdict: %s, content_length=%d", "APPROVED" if approved else "REJECTED", len(content))
 
     feedback_message = AIMessage(content=content, name="factchecker")
     show_agent_output("factchecker", content, approved=approved)
@@ -257,6 +365,7 @@ def factchecker_node(state: PipelineState) -> dict:
     return {
         "messages": [feedback_message],
         "factchecker_approved": approved,
+        "factchecker_iteration": state.get("factchecker_iteration", 0) + 1,
         "node_transitions": transitions,
         "last_agent": "factchecker",
     }
@@ -265,6 +374,7 @@ def factchecker_node(state: PipelineState) -> dict:
 def supervisor_node(state: PipelineState) -> dict:
     """Supervisor decides which agent to call next."""
     transitions = track_transition(state, "supervisor")
+    _log_state(state, "supervisor")
     logger.info("Supervisor: analyzing state and deciding next step...")
 
     if state["iteration"] >= 20:
@@ -273,8 +383,10 @@ def supervisor_node(state: PipelineState) -> dict:
             "messages": [AIMessage(content="Max iterations reached. Finishing with current draft.", name="supervisor")],
             "next_agent": "finish",
             "node_transitions": transitions,
-            "last_agent": "supervisor",
         }
+
+    last_msg = state["messages"][-1]
+    last_msg_name = getattr(last_msg, "name", None) or type(last_msg).__name__
 
     state_info = (
         f"Current state: iteration={state['iteration']}, "
@@ -283,7 +395,10 @@ def supervisor_node(state: PipelineState) -> dict:
         f"node_transitions={state.get('node_transitions', {})}"
     )
 
-    messages = [SystemMessage(content=state_info), state["messages"][-1]]
+    messages = [
+        SystemMessage(content=state_info),
+        HumanMessage(content=f"[{last_msg_name}]:\n{_ensure_str(last_msg.content)}"),
+    ]
 
     prompt = ChatPromptTemplate([("system", agents_config.supervisor.prompt), ("placeholder", "{messages}")])
     chain = prompt | supervisor_llm
@@ -291,6 +406,7 @@ def supervisor_node(state: PipelineState) -> dict:
     with processing("supervisor"):
         response: SupervisorOutput = chain.invoke({"messages": messages})
 
+    logger.debug("[supervisor] Decision: next_agent=%s, reasoning=%s", response.next_agent, response.reasoning[:200])
     show_agent_output("supervisor", response.reasoning)
     show_routing("supervisor", response.next_agent)
 
@@ -298,16 +414,19 @@ def supervisor_node(state: PipelineState) -> dict:
         "messages": [AIMessage(content=response.reasoning, name="supervisor")],
         "next_agent": response.next_agent,
         "node_transitions": transitions,
-        "last_agent": "supervisor",
     }
 
 
 def researcher_node(state: PipelineState) -> dict:
     """Research the topic before writing begins."""
     transitions = track_transition(state, "researcher")
+    _log_state(state, "researcher")
     logger.info("Researcher: gathering context and angles")
 
     messages = list(state["messages"])
+    logger.debug(
+        "[researcher] Input messages: %d, article_content: %d sources", len(messages), len(state["article_content"])
+    )
 
     if state["article_content"]:
         article_text = "\n\n---\n\n".join(state["article_content"])
@@ -323,7 +442,7 @@ def researcher_node(state: PipelineState) -> dict:
         response = chain.invoke({"messages": messages})
 
     if response.tool_calls:
-        response = AIMessage(content=response.content, tool_calls=response.tool_calls, name="researcher")
+        response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="researcher")
         logger.info("Researcher wants to call tools: %s", [tc["name"] for tc in response.tool_calls])
         return {
             "messages": [response],
@@ -331,8 +450,9 @@ def researcher_node(state: PipelineState) -> dict:
             "node_transitions": transitions,
         }
 
-    research_message = AIMessage(content=response.content, name="researcher")
-    show_agent_output("researcher", response.content)
+    content = _ensure_str(response.content)
+    research_message = AIMessage(content=content, name="researcher")
+    show_agent_output("researcher", content)
 
     return {
         "messages": [research_message],
@@ -343,10 +463,42 @@ def researcher_node(state: PipelineState) -> dict:
 
 SWARM_ANGLES = ["HUMOR", "DRAMA", "HISTORY REFERENCES"]
 
+SWARM_SUMMARIZE_PROMPT = """Ты — редактор креативного отдела. Тебе дали сырые идеи от трёх креативщиков (HUMOR, DRAMA, HISTORY REFERENCES).
+
+Твоя задача — выбрать ЛУЧШИЕ идеи из всех углов и собрать их в ОДИН короткий документ с буллетами.
+
+Правила:
+- Выбирай только сильные, конкретные, яркие идеи — не всё подряд
+- Группируй по смыслу, НЕ по углам
+- Каждый буллет — 1-2 предложения максимум
+- Итого 7-12 буллетов
+- Формулируй кратко и чётко, без воды
+- Сохраняй отсылки, метафоры и сильные фразы дословно если они хороши
+
+Формат ответа:
+
+**Лучшие идеи и находки:**
+
+- [идея/находка]
+- [идея/находка]
+...
+
+**Сильные формулировки:**
+
+- [фраза или метафора]
+- [фраза или метафора]
+...
+
+**Лучшие отсылки:**
+
+- [отсылка и почему она работает]
+..."""
+
 
 def swarm_node(state: PipelineState) -> dict:
-    """Run swarm writers once, summarize into one message."""
+    """Run swarm writers once, summarize best ideas into bullets."""
     transitions = track_transition(state, "swarm")
+    _log_state(state, "swarm")
     logger.info("Swarm: brainstorming %d angles", len(SWARM_ANGLES))
 
     base_messages = list(state["messages"])
@@ -361,7 +513,6 @@ def swarm_node(state: PipelineState) -> dict:
     prompt = ChatPromptTemplate([("system", agents_config.swarm_writer.prompt), ("placeholder", "{messages}")])
     chain = prompt | swarm_writer_llm
 
-    # Single round: each writer generates ideas from their angle
     drafts = []
     for i, angle in enumerate(SWARM_ANGLES):
         logger.info("Swarm: angle %s", angle)
@@ -373,13 +524,25 @@ def swarm_node(state: PipelineState) -> dict:
         with processing("swarm"):
             response = chain.invoke({"messages": swarm_messages})
 
-        drafts.append(f"## {angle}\n{response.content}")
+        drafts.append(f"## {angle}\n{_ensure_str(response.content)}")
         logger.info("Swarm: %s completed", angle)
 
-    # Combine all into one message
-    combined = "\n\n---\n\n".join(drafts)
-    swarm_message = AIMessage(content=combined, name="swarm")
-    show_agent_output("swarm", combined)
+    combined_raw = "\n\n---\n\n".join(drafts)
+    logger.info("Swarm: summarizing %d angles into best ideas", len(SWARM_ANGLES))
+
+    summarize_messages = [
+        SystemMessage(content=SWARM_SUMMARIZE_PROMPT),
+        HumanMessage(content=f"Вот сырые идеи от креативщиков:\n\n{combined_raw}"),
+    ]
+
+    with processing("swarm"):
+        summary_response = swarm_writer_llm.invoke(summarize_messages)
+
+    summary = _ensure_str(summary_response.content)
+    logger.info("Swarm: summary ready, %d chars", len(summary))
+
+    swarm_message = AIMessage(content=summary, name="swarm")
+    show_agent_output("swarm", summary)
 
     return {
         "messages": [swarm_message],

@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 class WriterOutput(BaseModel):
     """Output from the Writer agent containing reasoning and the video script."""
 
-    reasoning: str = Field(description="Ваш мыслительный процесс согласно структуре из промпта")
-    draft: str = Field(description="Полный текст видеосценария")
+    reasoning: str = Field(description="CHAIN OF THOUGHT: внутренний мыслительный процесс — определение стадии (A/B/C), анализ задачи, план сценария, замечания. Сюда НЕ входит текст сценария.")
+    draft: str = Field(description="DRAFT: ПОЛНЫЙ текст видеосценария для устного произнесения + источники в конце. ВЕСЬ сценарий пишется ТОЛЬКО сюда. Поле НЕ может быть пустым.")
 
 
 class EditorOutput(BaseModel):
