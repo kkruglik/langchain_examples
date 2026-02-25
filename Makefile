@@ -1,4 +1,4 @@
-.PHONY: run run-supervisor run-ui run-textual run-textual-web run-gradio lint fix format check install
+.PHONY: run run-supervisor run-ui run-textual run-textual-web run-gradio scrape scrape-news scrape-articles lint fix format check install
 
 run:
 	uv run python -m langchain_examples.main
@@ -17,6 +17,15 @@ run-textual-web:
 
 run-gradio:
 	uv run python -m langchain_examples.ui.gradio_app
+
+scrape:
+	uv run src/langchain_examples/scripts/verstka_scraper.py
+
+scrape-news:
+	uv run src/langchain_examples/scripts/verstka_scraper.py --category news
+
+scrape-articles:
+	uv run src/langchain_examples/scripts/verstka_scraper.py --category article
 
 # Linting
 lint:
