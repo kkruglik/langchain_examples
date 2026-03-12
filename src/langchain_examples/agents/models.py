@@ -30,10 +30,3 @@ class FactCheckerOutput(BaseModel):
     )
 
 
-class SupervisorOutput(BaseModel):
-    """Supervisor's routing decision."""
-
-    reasoning: str = Field(description="Brief explanation of why this agent should be called next")
-    next_agent: str = Field(
-        description="The next agent to call: 'researcher', 'swarm', 'writer', 'editor', 'factchecker', or 'finish'"
-    )

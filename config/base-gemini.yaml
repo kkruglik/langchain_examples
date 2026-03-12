@@ -1,11 +1,4 @@
 agents:
-  supervisor:
-    model:
-      provider: google
-      name: gemini-2.5-flash
-      temperature: 0.1
-    prompt_path: prompts/supervisor/v2.md
-
   writer:
     model:
       provider: google

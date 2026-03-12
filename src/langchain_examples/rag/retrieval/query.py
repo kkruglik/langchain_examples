@@ -4,9 +4,9 @@ from qdrant_client import models
 from qdrant_client.models import ScoredPoint
 from langsmith import traceable
 
-from .embedders import bm25_embedding_model, dense_embeddings
+from langchain_examples.rag.ingestion.embedders import bm25_embedding_model, dense_embeddings
+from langchain_examples.rag.ingestion.vdb import search
 from .reranker import rerank
-from .vdb import search
 
 logger = logging.getLogger(__name__)
 

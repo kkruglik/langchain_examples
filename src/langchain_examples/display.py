@@ -16,7 +16,6 @@ AGENT_LABELS = {
     "writer": "Writer is drafting...",
     "editor": "Editor is reviewing...",
     "factchecker": "FactChecker is verifying...",
-    "supervisor": "Supervisor is deciding...",
     "researcher": "Researcher is investigating...",
     "swarm": "Swarm Writers are drafting...",
     "scraping": "Scraping URL...",
@@ -40,7 +39,6 @@ def show_agent_output(agent: str, content: str | list, approved: bool | None = N
         "writer": "blue",
         "editor": "yellow",
         "factchecker": "magenta",
-        "supervisor": "cyan",
         "researcher": "green",
         "swarm": "bright_blue",
     }
@@ -110,31 +108,13 @@ def show_tool_call(tool_name: str, args: dict) -> None:
     console.print(f"[dim]Tool: {tool_name}({args_str})[/dim]")
 
 
-def show_node_stats(transitions: dict[str, int]) -> None:
-    """Display node transition statistics."""
-    if not transitions:
-        return
-
-    console.print()
-    console.print(Panel.fit("[bold]Node Communication Stats[/bold]", border_style="cyan"))
-
-    # Sort by count (descending), then by name
-    sorted_transitions = sorted(transitions.items(), key=lambda x: (-x[1], x[0]))
-
-    for edge, count in sorted_transitions:
-        console.print(f"  {edge}: [bold]{count}[/bold]")
-
-    total = sum(transitions.values())
-    console.print(f"\n  [dim]Total transitions: {total}[/dim]")
-
-
 def show_config(config_file: str, agents_config) -> None:
     """Display loaded config summary to console."""
     console.print()
     console.print(f"[bold cyan]Config:[/bold cyan] {config_file}")
     console.print()
 
-    for agent_name in ["supervisor", "writer", "editor", "factchecker", "researcher", "swarm_writer"]:
+    for agent_name in ["writer", "editor", "factchecker", "researcher", "swarm_writer"]:
         agent_cfg = getattr(agents_config, agent_name)
         model = agent_cfg.model
         console.print(

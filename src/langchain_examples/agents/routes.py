@@ -52,35 +52,3 @@ def route_after_tool(state):
     return f"to_{last_agent}"
 
 
-def route_after_editor_supervisor(state):
-    """Route for editor in supervisor mode - back to supervisor."""
-    return "to_supervisor"
-
-
-def route_after_factchecker_supervisor(state):
-    """Route for factchecker in supervisor mode - tool calls or back to supervisor."""
-    if _has_tool_calls(state):
-        return "tool_use"
-    return "to_supervisor"
-
-
-def route_after_researcher_supervisor(state):
-    """Route for researcher in supervisor mode - tool calls or back to supervisor."""
-    if _has_tool_calls(state):
-        return "tool_use"
-    return "to_supervisor"
-
-
-AGENTS = ["writer", "editor", "factchecker", "researcher", "swarm"]
-
-
-def route_after_supervisor(state) -> str:
-    """Route based on supervisor's decision."""
-    next_agent = state.get("next_agent", "writer")
-
-    if next_agent == "finish":
-        return "user_input_node"
-    elif next_agent in AGENTS:
-        return f"{next_agent}_agent"
-    else:
-        return "writer_agent"

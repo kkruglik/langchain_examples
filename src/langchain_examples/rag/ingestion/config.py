@@ -9,7 +9,7 @@ from pydantic_settings import (
 )
 
 
-CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
+CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "config"
 DEFAULT_CONFIG = "config/base-rag-pipeline.yaml"
 
 

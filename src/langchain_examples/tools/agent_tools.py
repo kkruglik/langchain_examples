@@ -1,9 +1,8 @@
-from langsmith import traceable
 import json
 import random
 import time
 
-from langchain_examples.pipelines.query import rag_query
+from langchain_examples.rag.retrieval.query import rag_query
 
 import httpx
 from bs4 import BeautifulSoup
@@ -172,31 +171,6 @@ def scrape_article(url: str) -> str:
         return f"Error: Request failed for {url}: {e}"
     except Exception as e:
         return f"Error: Failed to scrape {url}: {e}"
-
-
-def analyze_script(script: str) -> dict:
-    """Analyze script length and estimate speaking time.
-
-    Args:
-        script: The script text to analyze
-
-    Returns:
-        Dict with character count, word count, and estimated speaking time in seconds
-    """
-    logger.debug("analyze_script called")
-    words = script.split()
-    word_count = len(words)
-    char_count = len(script)
-
-    # Average speaking rate: 150 words per minute (2.5 words per second)
-    speaking_time_seconds = int(word_count / 2.5)
-
-    return {
-        "characters": char_count,
-        "words": word_count,
-        "speaking_time_seconds": speaking_time_seconds,
-        "speaking_time_formatted": f"{speaking_time_seconds // 60}:{speaking_time_seconds % 60:02d}",
-    }
 
 
 @tool

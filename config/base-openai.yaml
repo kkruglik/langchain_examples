@@ -1,11 +1,4 @@
 agents:
-  supervisor:
-    model:
-      provider: openai
-      name: gpt-5-mini-2025-08-07
-      temperature: 0.1
-    prompt_path: prompts/supervisor/v2.md
-
   writer:
     model:
       provider: openai

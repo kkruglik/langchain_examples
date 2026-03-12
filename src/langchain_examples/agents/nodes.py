@@ -8,7 +8,6 @@ from langchain_examples.agents.agents import (
     editor_llm,
     factchecker_llm,
     researcher_llm,
-    supervisor_llm,
     swarm_writer_llm,
     tools_by_name,
     writer_llm,
@@ -19,14 +18,14 @@ from langchain_examples.display import (
     processing,
     show_agent_output,
     show_draft,
-    show_routing,
     show_tool_call,
     show_user_prompt,
 )
 from langchain_examples.logging import get_logger
-from langchain_examples.tools.scrapers import analyze_script, scrape_article, scrape_telegram_post
+from langchain_examples.agents.utils import analyze_script
+from langchain_examples.tools.agent_tools import scrape_article, scrape_telegram_post
 
-from .models import EditorOutput, SupervisorOutput, WriterOutput
+from .models import EditorOutput, WriterOutput
 
 logger = get_logger(__name__)
 
@@ -92,19 +91,6 @@ def _log_messages(messages: list, node_name: str) -> None:
         )
 
 
-def track_transition(state: PipelineState, current_node: str) -> dict[str, int]:
-    """Track node transition and return updated transitions dict."""
-    transitions = dict(state.get("node_transitions") or {})
-    last = state.get("last_agent", "")
-
-    if last:
-        key = f"{last}→{current_node}"
-        transitions[key] = transitions.get(key, 0) + 1
-        logger.debug("Transition: %s (count: %d)", key, transitions[key])
-
-    return transitions
-
-
 URL_PATTERN = re.compile(
     r"(?:https?://)?"
     r"(?:www\.)?"
@@ -126,7 +112,6 @@ def normalize_url(url: str) -> str:
 
 def tool_node(state: PipelineState) -> dict:
     """Execute tool calls and return results as messages."""
-    transitions = track_transition(state, "tools")
     _log_state(state, "tools")
     tool_calls = state["messages"][-1].tool_calls
     logger.debug(
@@ -146,12 +131,11 @@ def tool_node(state: PipelineState) -> dict:
 
         result_messages.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
 
-    return {"messages": result_messages, "node_transitions": transitions}
+    return {"messages": result_messages}
 
 
 def user_node(state: PipelineState) -> dict:
     """Get user input - text content, feedback, or message with URLs."""
-    transitions = track_transition(state, "user")
     _log_state(state, "user")
     has_drafts = bool(state["drafts"])
 
@@ -161,7 +145,7 @@ def user_node(state: PipelineState) -> dict:
     user_input = show_user_prompt(has_drafts)
 
     if user_input.lower() in ["exit", "quit", "stop", "bye", "done"]:
-        return {"user_approved": True, "node_transitions": transitions}
+        return {"user_approved": True}
 
     article_content = []
     urls = URL_PATTERN.findall(user_input)
@@ -187,14 +171,12 @@ def user_node(state: PipelineState) -> dict:
         "factchecker_approved": False,
         "editor_iteration": 0,
         "factchecker_iteration": 0,
-        "node_transitions": transitions,
         "last_agent": "user",
     }
 
 
 def writer_node(state: PipelineState) -> dict:
     """Generate script from article."""
-    transitions = track_transition(state, "writer")
     _log_state(state, "writer")
     logger.info("Writer: iteration %d", state["iteration"])
 
@@ -253,14 +235,12 @@ def writer_node(state: PipelineState) -> dict:
         "messages": [writer_message],
         "drafts": [response.draft],
         "iteration": new_iteration,
-        "node_transitions": transitions,
         "last_agent": "writer",
     }
 
 
 def editor_node(state: PipelineState) -> dict:
     """Review script for quality."""
-    transitions = track_transition(state, "editor")
     _log_state(state, "editor")
     logger.info("Editor: reviewing script")
 
@@ -305,14 +285,12 @@ def editor_node(state: PipelineState) -> dict:
         "messages": [feedback_message],
         "editor_approved": response.approved,
         "editor_iteration": state.get("editor_iteration", 0) + 1,
-        "node_transitions": transitions,
         "last_agent": "editor",
     }
 
 
 def factchecker_node(state: PipelineState) -> dict:
     """Check facts in script."""
-    transitions = track_transition(state, "factchecker")
     _log_state(state, "factchecker")
     logger.info("FactChecker: verifying facts")
 
@@ -355,7 +333,7 @@ def factchecker_node(state: PipelineState) -> dict:
     if response.tool_calls:
         response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="factchecker")
         logger.info("FactChecker wants to call tools: %s", [tc["name"] for tc in response.tool_calls])
-        return {"messages": [response], "last_agent": "factchecker", "node_transitions": transitions}
+        return {"messages": [response], "last_agent": "factchecker"}
 
     content = _ensure_str(response.content)
     approved = "APPROVED" in content.upper() and "REJECTED" not in content.upper()
@@ -368,60 +346,12 @@ def factchecker_node(state: PipelineState) -> dict:
         "messages": [feedback_message],
         "factchecker_approved": approved,
         "factchecker_iteration": state.get("factchecker_iteration", 0) + 1,
-        "node_transitions": transitions,
         "last_agent": "factchecker",
-    }
-
-
-def supervisor_node(state: PipelineState) -> dict:
-    """Supervisor decides which agent to call next."""
-    transitions = track_transition(state, "supervisor")
-    _log_state(state, "supervisor")
-    logger.info("Supervisor: analyzing state and deciding next step...")
-
-    if state["iteration"] >= 20:
-        logger.warning("Supervisor: max iterations reached, finishing")
-        return {
-            "messages": [AIMessage(content="Max iterations reached. Finishing with current draft.", name="supervisor")],
-            "next_agent": "finish",
-            "node_transitions": transitions,
-        }
-
-    last_msg = state["messages"][-1]
-    last_msg_name = getattr(last_msg, "name", None) or type(last_msg).__name__
-
-    state_info = (
-        f"Current state: iteration={state['iteration']}, "
-        f"editor_approved={state['editor_approved']}, "
-        f"factchecker_approved={state['factchecker_approved']}, "
-        f"node_transitions={state.get('node_transitions', {})}"
-    )
-
-    messages = [
-        SystemMessage(content=state_info),
-        HumanMessage(content=f"[{last_msg_name}]:\n{_ensure_str(last_msg.content)}"),
-    ]
-
-    prompt = ChatPromptTemplate([("system", agents_config.supervisor.prompt), ("placeholder", "{messages}")])
-    chain = prompt | supervisor_llm
-
-    with processing("supervisor"):
-        response: SupervisorOutput = chain.invoke({"messages": messages})
-
-    logger.debug("[supervisor] Decision: next_agent=%s, reasoning=%s", response.next_agent, response.reasoning[:200])
-    show_agent_output("supervisor", response.reasoning)
-    show_routing("supervisor", response.next_agent)
-
-    return {
-        "messages": [AIMessage(content=response.reasoning, name="supervisor")],
-        "next_agent": response.next_agent,
-        "node_transitions": transitions,
     }
 
 
 def researcher_node(state: PipelineState) -> dict:
     """Research the topic before writing begins."""
-    transitions = track_transition(state, "researcher")
     _log_state(state, "researcher")
     logger.info("Researcher: gathering context and angles")
 
@@ -449,7 +379,6 @@ def researcher_node(state: PipelineState) -> dict:
         return {
             "messages": [response],
             "last_agent": "researcher",
-            "node_transitions": transitions,
         }
 
     content = _ensure_str(response.content)
@@ -458,7 +387,6 @@ def researcher_node(state: PipelineState) -> dict:
 
     return {
         "messages": [research_message],
-        "node_transitions": transitions,
         "last_agent": "researcher",
     }
 
@@ -499,7 +427,6 @@ SWARM_SUMMARIZE_PROMPT = """Ты — редактор креативного о�
 
 def swarm_node(state: PipelineState) -> dict:
     """Run swarm writers once, summarize best ideas into bullets."""
-    transitions = track_transition(state, "swarm")
     _log_state(state, "swarm")
     logger.info("Swarm: brainstorming %d angles", len(SWARM_ANGLES))
 
@@ -548,6 +475,5 @@ def swarm_node(state: PipelineState) -> dict:
 
     return {
         "messages": [swarm_message],
-        "node_transitions": transitions,
         "last_agent": "swarm",
     }

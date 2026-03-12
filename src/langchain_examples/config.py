@@ -53,7 +53,6 @@ class AgentConfig(BaseModel):
 class AgentsConfig(BaseModel):
     """All agent configs. Nested under 'agents' key in YAML."""
 
-    supervisor: AgentConfig
     writer: AgentConfig
     editor: AgentConfig
     factchecker: AgentConfig

@@ -28,7 +28,7 @@ from .agents.routes import (
 )
 from .agents.state import PipelineState
 from .config import DEFAULT_CONFIG, agents_config as loaded_agents_config
-from .display import show_config, show_final_script, show_node_stats, show_previous_state
+from .display import show_config, show_final_script, show_previous_state
 from .logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -156,9 +156,7 @@ def main():
                     "editor_approved": False,
                     "factchecker_approved": False,
                     "user_approved": False,
-                    "next_agent": "",
                     "last_agent": "",
-                    "node_transitions": {},
                     "editor_iteration": 0,
                     "factchecker_iteration": 0,
                 },
@@ -184,8 +182,6 @@ def main():
             f.write(final_script)
         logger.info("Final script saved to: %s", script_filename)
 
-    if result.get("node_transitions"):
-        show_node_stats(result["node_transitions"])
 
 
 if __name__ == "__main__":
