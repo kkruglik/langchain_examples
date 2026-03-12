@@ -4,8 +4,12 @@ from pydantic import BaseModel, Field
 class WriterOutput(BaseModel):
     """Output from the Writer agent containing reasoning and the video script."""
 
-    reasoning: str = Field(description="CHAIN OF THOUGHT: внутренний мыслительный процесс — определение стадии (A/B/C), анализ задачи, план сценария, замечания. Сюда НЕ входит текст сценария.")
-    draft: str = Field(description="DRAFT: ПОЛНЫЙ текст видеосценария для устного произнесения + источники в конце. ВЕСЬ сценарий пишется ТОЛЬКО сюда. Поле НЕ может быть пустым.")
+    reasoning: str = Field(
+        description="CHAIN OF THOUGHT: внутренний мыслительный процесс — определение стадии (A/B/C), анализ задачи, план сценария, замечания. Сюда НЕ входит текст сценария."
+    )
+    draft: str = Field(
+        description="DRAFT: ПОЛНЫЙ текст видеосценария для устного произнесения + источники в конце. ВЕСЬ сценарий пишется ТОЛЬКО сюда. Поле НЕ может быть пустым."
+    )
 
 
 class EditorOutput(BaseModel):
@@ -28,5 +32,3 @@ class FactCheckerOutput(BaseModel):
     feedback: str = Field(
         description="If verified: confirmation that facts are accurate. If issues found: list specific facts not in article, distorted facts, or unsupported claims."
     )
-
-

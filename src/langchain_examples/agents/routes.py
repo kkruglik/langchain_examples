@@ -50,5 +50,3 @@ def route_after_tool(state):
     """Route back to the agent that called the tool."""
     last_agent = state.get("last_agent", "writer")
     return f"to_{last_agent}"
-
-
