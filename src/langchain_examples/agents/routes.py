@@ -31,9 +31,7 @@ def route_after_writer(state):
 
 
 def route_after_editor(state):
-    """Route: tool_use / approved (max 4 iterations) / rejected."""
-    if _has_tool_calls(state):
-        return "tool_use"
+    """Route: approved (max 4 iterations) / rejected."""
     if state["editor_approved"] or state.get("editor_iteration", 0) >= 4:
         return "approved"
     return "rejected"
@@ -55,9 +53,7 @@ def route_after_tool(state):
 
 
 def route_after_editor_supervisor(state):
-    """Route for editor in supervisor mode - tool calls or back to supervisor."""
-    if _has_tool_calls(state):
-        return "tool_use"
+    """Route for editor in supervisor mode - back to supervisor."""
     return "to_supervisor"
 
 

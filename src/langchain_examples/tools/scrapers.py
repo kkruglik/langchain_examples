@@ -1,5 +1,9 @@
+from langsmith import traceable
+import json
 import random
 import time
+
+from langchain_examples.pipelines.query import rag_query
 
 import httpx
 from bs4 import BeautifulSoup
@@ -58,7 +62,6 @@ def scrape_telegram_post(url: str) -> str:
         article_text = soup.get_text(strip=True)
 
     return str({"article_text": article_text, "url": url})
-
 
 
 USER_AGENTS = [
@@ -171,7 +174,6 @@ def scrape_article(url: str) -> str:
         return f"Error: Failed to scrape {url}: {e}"
 
 
-@tool
 def analyze_script(script: str) -> dict:
     """Analyze script length and estimate speaking time.
 
@@ -181,7 +183,7 @@ def analyze_script(script: str) -> dict:
     Returns:
         Dict with character count, word count, and estimated speaking time in seconds
     """
-    logger.debug("Tool call: analyze_script")
+    logger.debug("analyze_script called")
     words = script.split()
     word_count = len(words)
     char_count = len(script)
@@ -226,18 +228,31 @@ def web_search(query: str, max_results: int = 5) -> str:
         return f"Error: Search failed for '{query}'. Try a different query or continue without this search."
 
 
-if __name__ == "__main__":
-    from langchain_examples.logging import setup_logging
+@tool
+def search_verstka_texts(query: str, max_results: int = 5) -> str:
+    """Search Verstka.media internal knowledge base for relevant articles and news.
 
-    setup_logging()
+    Use this tool when you need background context, prior coverage, or factual information
+    from the Verstka.media archive. Performs hybrid semantic + keyword search with reranking.
 
-    # Test Telegram scraper with valid URL
-    telegram_url = "https://t.me/svobodnieslova/7898"
-    logger.info("Testing Telegram scraper with valid URL:")
-    result = scrape_telegram_post(telegram_url)
-    logger.info("Result: %s", result)
+    Args:
+        query: Natural language search query ONLY in Russian
+        max_results: Number of top results to return (default 5)
 
-    # Test Telegram scraper with invalid URL
-    logger.info("Testing Telegram scraper with invalid URL:")
-    result = scrape_telegram_post("https://example.com/article")
-    logger.info("Result: %s", result)
+    Returns:
+        JSON string with a list of results, each with keys: title, date, category, url, text
+    """
+    logger.info("Tool call: search_verstka_texts(%s)", query)
+
+    points = rag_query(query, max_results)
+    results = [
+        {
+            "title": p.payload.get("title", ""),
+            "date": p.payload.get("date", ""),
+            "category": p.payload.get("category", ""),
+            "url": p.payload.get("url", ""),
+            "text": p.payload.get("text", ""),
+        }
+        for p in points
+    ]
+    return json.dumps(results, ensure_ascii=False)

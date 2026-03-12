@@ -1,8 +1,10 @@
 import argparse
+import hashlib
+import html
 import json
 import logging
+import re
 import random
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -10,6 +12,11 @@ from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
+
+
+def clean(text: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(text).replace("\xa0", " ")).strip()
+
 
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -153,7 +160,7 @@ def parse_listing_page(soup: BeautifulSoup) -> list[dict]:
                 continue
 
             heading = card.find(["h1", "h2", "h3", "h4"])
-            title = heading.get_text(strip=True) if heading else ""
+            title = clean(heading.get_text(strip=True)) if heading else ""
 
             seen_urls.add(article_url)
             results.append({"url": article_url, "title": title, "date_preview": date_preview})
@@ -164,7 +171,7 @@ def parse_listing_page(soup: BeautifulSoup) -> list[dict]:
             url = href if href.startswith("http") else BASE_URL + href
             if not url.startswith(BASE_URL) or not _is_article_url(url) or url in seen_urls:
                 continue
-            title = a_tag.get_text(strip=True)
+            title = clean(a_tag.get_text(strip=True))
             if not title:
                 continue
             seen_urls.add(url)
@@ -184,7 +191,7 @@ def get_last_page(soup: BeautifulSoup) -> int:
     return max(nums) if nums else 1
 
 
-def get_article_urls(client: httpx.Client, category: str, seen_urls: set[str]) -> list[dict]:
+def get_article_urls(client: httpx.Client, category: str, seen_urls: set[str], incremental: bool = True) -> list[dict]:
     cfg = CATEGORIES[category]
     stubs = []
 
@@ -209,6 +216,10 @@ def get_article_urls(client: httpx.Client, category: str, seen_urls: set[str]) -
         new_stubs = [s for s in page_stubs if s["url"] not in seen_urls]
         stubs.extend(new_stubs)
         logger.info("Page %s/%s: %d total, %d new", page, last_page, len(page_stubs), len(new_stubs))
+
+        if not new_stubs and incremental:
+            logger.info("No new URLs on page %s, stopping early", page)
+            break
 
     return stubs
 
@@ -288,9 +299,13 @@ def extract_article_content(soup: BeautifulSoup) -> str:
     if not container:
         return ""
 
+    for inline in container.find_all(["a", "strong", "em", "b", "i", "span"]):
+        inline.insert_before(" ")
+        inline.insert_after(" ")
+
     parts = []
     for el in container.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p"]):
-        text = el.get_text(separator=" ", strip=True)
+        text = clean(el.get_text(separator=" ", strip=True))
         if not text or len(text) < 10:
             continue
         if el.name.startswith("h"):
@@ -309,7 +324,7 @@ def parse_article_page(soup: BeautifulSoup, url: str, category: str) -> dict | N
     if not meta.get("title"):
         h1 = soup.find("h1")
         if h1:
-            meta["title"] = h1.get_text(strip=True)
+            meta["title"] = clean(h1.get_text(strip=True))
 
     if not meta.get("date"):
         time_tag = soup.find("time", attrs={"datetime": True})
@@ -319,7 +334,7 @@ def parse_article_page(soup: BeautifulSoup, url: str, category: str) -> dict | N
     if not meta.get("author"):
         author_el = soup.find(class_=lambda c: c and "author" in c.lower())
         if author_el:
-            meta["author"] = author_el.get_text(strip=True)
+            meta["author"] = clean(author_el.get_text(strip=True))
 
     if not meta.get("tags"):
         tag_links = soup.find_all("a", rel="tag")
@@ -333,7 +348,8 @@ def parse_article_page(soup: BeautifulSoup, url: str, category: str) -> dict | N
 
     return {
         "url": url,
-        "title": meta.get("title", "").replace("\u00a0", " ").strip(),
+        "source": "verstka.media",
+        "title": clean(meta.get("title", "")),
         "date": meta.get("date", ""),
         "category": category,
         "author": meta.get("author", ""),
@@ -358,16 +374,17 @@ def _scrape_one(url: str, category: str) -> dict | None:
 
 
 def scrape_category(category: str, incremental: bool, data_dir: Path, workers: int = 5) -> int:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    cfg = CATEGORIES[category]
-    seen_path = data_dir / f"seen_urls_{category}.txt"
-    out_path = data_dir / cfg["output_file"]
+    out_dir = data_dir / "documents" / category
+    meta_dir = data_dir / "meta"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    seen_path = meta_dir / f"seen_urls_{category}.txt"
 
     seen_urls = load_seen_urls(seen_path) if incremental else set()
     logger.info("Category=%s incremental=%s seen=%d", category, incremental, len(seen_urls))
 
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        stubs = get_article_urls(client, category, seen_urls)
+        stubs = get_article_urls(client, category, seen_urls, incremental)
 
     logger.info("Found %d new article(s) to scrape for category=%s", len(stubs), category)
     if not stubs:
@@ -376,33 +393,31 @@ def scrape_category(category: str, incremental: bool, data_dir: Path, workers: i
 
     scraped_count = 0
     error_count = 0
-    write_lock = threading.Lock()
 
-    with out_path.open("a", encoding="utf-8") as out_file:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_scrape_one, s["url"], category): s["url"] for s in stubs}
-            for future in as_completed(futures):
-                url = futures[future]
-                try:
-                    record = future.result()
-                except Exception as e:
-                    logger.error("Unexpected error scraping %s: %s", url, e)
-                    error_count += 1
-                    save_seen_url(seen_path, url)
-                    continue
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_scrape_one, s["url"], category): s["url"] for s in stubs}
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                record = future.result()
+            except Exception as e:
+                logger.error("Unexpected error scraping %s: %s", url, e)
+                error_count += 1
+                save_seen_url(seen_path, url)
+                continue
 
-                if record is None:
-                    logger.warning("No content for %s, marking seen", url)
-                    error_count += 1
-                    save_seen_url(seen_path, url)
-                    continue
+            if record is None:
+                logger.warning("No content for %s, marking seen", url)
+                error_count += 1
+                save_seen_url(seen_path, url)
+                continue
 
-                logger.info("Scraped: %s", url)
-                with write_lock:
-                    out_file.write(json.dumps(record, ensure_ascii=False) + "\n")
-                    out_file.flush()
-                    save_seen_url(seen_path, url)
-                scraped_count += 1
+            url_hash = hashlib.md5(url.encode()).hexdigest()
+            out_path = out_dir / f"{url_hash}.json"
+            out_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+            save_seen_url(seen_path, url)
+            logger.info("Scraped: %s", url)
+            scraped_count += 1
 
     logger.info("Category=%s done: scraped=%d errors=%d", category, scraped_count, error_count)
     return scraped_count
@@ -424,8 +439,8 @@ def main() -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("data/verstka"),
-        help="Output directory (default: data/verstka)",
+        default=Path("data/rag/collections/verstka"),
+        help="Output directory (default: data/rag/collections/verstka)",
     )
     parser.add_argument(
         "--workers",
@@ -439,11 +454,15 @@ def main() -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     incremental = not args.no_incremental
 
+    logs_dir = Path("logs")
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
-            logging.FileHandler(data_dir / "scraper.log", encoding="utf-8"),
+            logging.FileHandler(logs_dir / f"verstka_scraper_{timestamp}.log", encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )

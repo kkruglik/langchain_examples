@@ -1,0 +1,14 @@
+embedding_model: text-embedding-3-small
+collection_path: data/rag/collections/
+batch_size: 500
+
+splitter:
+  chunk_size: 1000
+  chunk_overlap: 200
+
+qdrant:
+  url: http://localhost:6333
+  collection_name: documents
+  vector_size: 1536
+  distance: Cosine
+  k_results: 5

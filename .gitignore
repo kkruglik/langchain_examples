@@ -233,3 +233,5 @@ Temporary Items
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/qdrant/
+data/rag/

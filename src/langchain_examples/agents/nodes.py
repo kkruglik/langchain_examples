@@ -24,9 +24,9 @@ from langchain_examples.display import (
     show_user_prompt,
 )
 from langchain_examples.logging import get_logger
-from langchain_examples.tools.scrapers import scrape_article, scrape_telegram_post
+from langchain_examples.tools.scrapers import analyze_script, scrape_article, scrape_telegram_post
 
-from .models import SupervisorOutput, WriterOutput
+from .models import EditorOutput, SupervisorOutput, WriterOutput
 
 logger = get_logger(__name__)
 
@@ -230,6 +230,10 @@ def writer_node(state: PipelineState) -> dict:
             ],
         )
 
+    if state["article_content"]:
+        article_text = "\n\n---\n\n".join(state["article_content"])
+        messages.insert(0, SystemMessage(content=f"Article content (already scraped by user):\n\n{article_text}"))
+
     _log_messages(messages, "writer")
 
     prompt = ChatPromptTemplate([("system", agents_config.writer.prompt), ("placeholder", "{messages}")])
@@ -269,6 +273,15 @@ def editor_node(state: PipelineState) -> dict:
         ],
     )
 
+    if state["drafts"]:
+        metrics = analyze_script(state["drafts"][-1])
+        metrics_msg = (
+            f"Script metrics: {metrics['characters']} characters, {metrics['words']} words, "
+            f"estimated speaking time {metrics['speaking_time_formatted']} ({metrics['speaking_time_seconds']}s)"
+        )
+        messages.insert(0, SystemMessage(content=metrics_msg))
+        logger.debug("[editor] %s", metrics_msg)
+
     _log_messages(messages, "editor")
 
     prompt = ChatPromptTemplate(
@@ -281,27 +294,16 @@ def editor_node(state: PipelineState) -> dict:
     chain = prompt | editor_llm
 
     with processing("editor"):
-        response = chain.invoke({"messages": messages})
+        response: EditorOutput = chain.invoke({"messages": messages})
 
-    logger.debug(
-        "[editor] Raw response content type=%s, value=%s", type(response.content).__name__, repr(response.content)[:500]
-    )
+    logger.debug("[editor] Verdict: approved=%s, feedback_length=%d", response.approved, len(response.feedback))
 
-    if response.tool_calls:
-        response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="editor")
-        logger.info("Editor wants to call tools: %s", [tc["name"] for tc in response.tool_calls])
-        return {"messages": [response], "last_agent": "editor", "node_transitions": transitions}
-
-    content = _ensure_str(response.content)
-    approved = "APPROVED" in content.upper() and "REJECTED" not in content.upper()
-    logger.debug("[editor] Verdict: %s, content_length=%d", "APPROVED" if approved else "REJECTED", len(content))
-
-    feedback_message = AIMessage(content=content, name="editor")
-    show_agent_output("editor", content, approved=approved)
+    feedback_message = AIMessage(content=response.feedback, name="editor")
+    show_agent_output("editor", response.feedback, approved=response.approved)
 
     return {
         "messages": [feedback_message],
-        "editor_approved": approved,
+        "editor_approved": response.approved,
         "editor_iteration": state.get("editor_iteration", 0) + 1,
         "node_transitions": transitions,
         "last_agent": "editor",

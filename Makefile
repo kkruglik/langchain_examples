@@ -1,22 +1,7 @@
-.PHONY: run run-supervisor run-ui run-textual run-textual-web run-gradio scrape scrape-news scrape-articles lint fix format check install
+.PHONY: run run-supervisor run-ui run-textual run-textual-web run-gradio scrape scrape-news scrape-articles rag drop-rag qdrant qdrant-down lint fix format check install
 
 run:
 	uv run python -m langchain_examples.main
-
-run-supervisor:
-	uv run python -m langchain_examples.main_supervisor
-
-run-ui:
-	uv run streamlit run run_streamlit.py
-
-run-textual:
-	uv run python -m langchain_examples.ui.textual_app
-
-run-textual-web:
-	uv run textual serve src/langchain_examples/ui/textual_app.py:PipelineApp
-
-run-gradio:
-	uv run python -m langchain_examples.ui.gradio_app
 
 scrape:
 	uv run src/langchain_examples/scripts/verstka_scraper.py
@@ -27,7 +12,19 @@ scrape-news:
 scrape-articles:
 	uv run src/langchain_examples/scripts/verstka_scraper.py --category article
 
-# Linting
+rag:
+	uv run python -m langchain_examples.pipelines
+
+drop-rag:
+	uv run python -c "from src.langchain_examples.pipelines.vdb import client, config; client.delete_collection(config.qdrant.collection_name); print(f'Dropped: {config.qdrant.collection_name}')"
+	echo "{}" > data/rag/meta/seen_files.json
+
+qdrant:
+	docker compose up -d
+
+qdrant-down:
+	docker compose down
+
 lint:
 	uv run ruff check src/
 
