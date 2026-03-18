@@ -1,3 +1,7 @@
+import contextvars
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from langsmith import traceable
 from langchain_examples.agents.utils import filter_messages
 import re
 
@@ -13,7 +17,6 @@ from langchain_examples.agents.agents import (
     writer_llm,
 )
 from langchain_examples.agents.state import PipelineState
-from langchain_examples.config import agents_config
 from langchain_examples.display import (
     processing,
     show_agent_output,
@@ -26,6 +29,7 @@ from langchain_examples.agents.utils import analyze_script
 from langchain_examples.tools.agent_tools import scrape_article, scrape_telegram_post
 
 from .models import EditorOutput, WriterOutput
+from ..config import agents_config
 
 logger = get_logger(__name__)
 
@@ -175,6 +179,7 @@ def user_node(state: PipelineState) -> dict:
     }
 
 
+@traceable(name="writer", run_type="chain", metadata={**agents_config.writer.model_dump()})
 def writer_node(state: PipelineState) -> dict:
     """Generate script from article."""
     _log_state(state, "writer")
@@ -239,6 +244,7 @@ def writer_node(state: PipelineState) -> dict:
     }
 
 
+@traceable(name="editor", run_type="chain", metadata={**agents_config.editor.model_dump()})
 def editor_node(state: PipelineState) -> dict:
     """Review script for quality."""
     _log_state(state, "editor")
@@ -289,6 +295,7 @@ def editor_node(state: PipelineState) -> dict:
     }
 
 
+@traceable(name="factchecker", run_type="chain", metadata={**agents_config.factchecker.model_dump()})
 def factchecker_node(state: PipelineState) -> dict:
     """Check facts in script."""
     _log_state(state, "factchecker")
@@ -350,6 +357,7 @@ def factchecker_node(state: PipelineState) -> dict:
     }
 
 
+@traceable(name="researcher", run_type="chain", metadata={**agents_config.researcher.model_dump()})
 def researcher_node(state: PipelineState) -> dict:
     """Research the topic before writing begins."""
     _log_state(state, "researcher")
@@ -388,6 +396,7 @@ def researcher_node(state: PipelineState) -> dict:
     return {
         "messages": [research_message],
         "last_agent": "researcher",
+        "research_output": content,
     }
 
 
@@ -395,15 +404,15 @@ SWARM_ANGLES = ["HUMOR", "DRAMA", "HISTORY REFERENCES"]
 
 SWARM_SUMMARIZE_PROMPT = """Ты — редактор креативного отдела. Тебе дали сырые идеи от трёх креативщиков (HUMOR, DRAMA, HISTORY REFERENCES).
 
-Твоя задача — выбрать ЛУЧШИЕ идеи из всех углов и собрать их в ОДИН короткий документ с буллетами.
+Твоя задача — сохранить все ценные идеи и собрать их в структурированный документ с буллетами.
 
 Правила:
-- Выбирай только сильные, конкретные, яркие идеи — не всё подряд
+- Убирай только дубли и откровенно слабые идеи — всё остальное оставляй
 - Группируй по смыслу, НЕ по углам
-- Каждый буллет — 1-2 предложения максимум
-- Итого 7-12 буллетов
-- Формулируй кратко и чётко, без воды
-- Сохраняй отсылки, метафоры и сильные фразы дословно если они хороши
+- Каждый буллет — 1-3 предложения, сохраняй детали и нюансы
+- Итого 12-20 буллетов
+- Формулируй чётко, без воды, но не обрезай смысл ради краткости
+- Сохраняй отсылки, метафоры и сильные фразы дословно
 
 Формат ответа:
 
@@ -425,36 +434,38 @@ SWARM_SUMMARIZE_PROMPT = """Ты — редактор креативного о�
 ..."""
 
 
-def swarm_node(state: PipelineState) -> dict:
+@traceable(name="swarm_writer", run_type="chain", metadata={**agents_config.swarm_writer.model_dump()})
+def swarm_writer_node(state: PipelineState) -> dict:
     """Run swarm writers once, summarize best ideas into bullets."""
     _log_state(state, "swarm")
     logger.info("Swarm: brainstorming %d angles", len(SWARM_ANGLES))
 
-    base_messages = list(state["messages"])
+    base_messages = []
 
     if state["article_content"]:
         article_text = "\n\n---\n\n".join(state["article_content"])
-        base_messages.insert(
-            0,
-            SystemMessage(content=f"Article content:\n\n{article_text}"),
-        )
+        base_messages.append(SystemMessage(content=f"Article content:\n\n{article_text}"))
+
+    if state.get("research_output"):
+        base_messages.append(HumanMessage(content=f"Research:\n\n{state['research_output']}"))
 
     prompt = ChatPromptTemplate([("system", agents_config.swarm_writer.prompt), ("placeholder", "{messages}")])
     chain = prompt | swarm_writer_llm
 
-    drafts = []
-    for i, angle in enumerate(SWARM_ANGLES):
-        logger.info("Swarm: angle %s", angle)
+    def run_angle(angle: str) -> tuple[str, str]:
+        messages = base_messages + [HumanMessage(content=f"Your assigned angle is: {angle}. Write your ideas/draft now.")]
+        response = chain.invoke({"messages": messages})
+        return angle, _ensure_str(response.content)
 
-        swarm_messages = base_messages + [
-            HumanMessage(content=f"Your assigned angle is: {angle}. Write your ideas/draft now.")
-        ]
+    drafts_map = {}
+    with ThreadPoolExecutor(max_workers=len(SWARM_ANGLES)) as executor:
+        futures = {executor.submit(contextvars.copy_context().run, run_angle, angle): angle for angle in SWARM_ANGLES}
+        for future in as_completed(futures):
+            angle, content = future.result()
+            drafts_map[angle] = content
+            logger.info("Swarm: %s completed", angle)
 
-        with processing("swarm"):
-            response = chain.invoke({"messages": swarm_messages})
-
-        drafts.append(f"## {angle}\n{_ensure_str(response.content)}")
-        logger.info("Swarm: %s completed", angle)
+    drafts = [f"## {angle}\n{drafts_map[angle]}" for angle in SWARM_ANGLES]
 
     combined_raw = "\n\n---\n\n".join(drafts)
     logger.info("Swarm: summarizing %d angles into best ideas", len(SWARM_ANGLES))
@@ -476,4 +487,5 @@ def swarm_node(state: PipelineState) -> dict:
     return {
         "messages": [swarm_message],
         "last_agent": "swarm",
+        "swarm_output": summary,
     }
