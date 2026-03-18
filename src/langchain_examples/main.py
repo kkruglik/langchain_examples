@@ -6,6 +6,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pypandoc
+
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
@@ -13,7 +15,7 @@ from .agents.nodes import (
     editor_node,
     factchecker_node,
     researcher_node,
-    swarm_node,
+    swarm_writer_node,
     tool_node,
     user_node,
     writer_node,
@@ -32,6 +34,13 @@ from .display import show_config, show_final_script, show_previous_state
 from .logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
+
+
+def save_docx(path: Path, content: str) -> None:
+    # Replace bare --- separators with blank lines to avoid pandoc misinterpreting them
+    lines = content.splitlines()
+    cleaned = "\n".join("" if line.strip() == "---" else line for line in lines)
+    pypandoc.convert_text(cleaned, "docx", format="markdown-yaml_metadata_block", outputfile=str(path))
 
 
 def signal_handler(sig, frame):
@@ -57,7 +66,7 @@ def main():
 
     graph.add_node("user_input_node", user_node)
     graph.add_node("researcher_agent", researcher_node)
-    graph.add_node("swarm_agent", swarm_node)
+    graph.add_node("swarm_agent", swarm_writer_node)
     graph.add_node("writer_agent", writer_node)
     graph.add_node("editor_agent", editor_node)
     graph.add_node("factchecker_agent", factchecker_node)
@@ -88,7 +97,7 @@ def main():
     graph.add_conditional_edges(
         "editor_agent",
         route_after_editor,
-        {"approved": "factchecker_agent", "rejected": "writer_agent", "tool_use": "tools"},
+        {"approved": "factchecker_agent", "rejected": "writer_agent"},
     )
 
     graph.add_conditional_edges(
@@ -100,7 +109,7 @@ def main():
     graph.add_conditional_edges(
         "tools",
         route_after_tool,
-        {"to_editor": "editor_agent", "to_factchecker": "factchecker_agent", "to_researcher": "researcher_agent"},
+        {"to_factchecker": "factchecker_agent", "to_researcher": "researcher_agent"},
     )
 
     app = graph.compile(checkpointer=memory)
@@ -134,6 +143,8 @@ def main():
     pipeline_filename = run_dir / "pipeline_result.json"
     graph_filename = run_dir / "pipeline_graph.png"
     script_filename = run_dir / "final_script.md"
+    research_filename = run_dir / "research_report.md"
+    swarm_filename = run_dir / "swarm_report.md"
 
     try:
         graph_image = app.get_graph().draw_mermaid_png()
@@ -145,7 +156,7 @@ def main():
 
     try:
         if prev_thread_id:
-            result = app.invoke(None, config=thread_config)
+            result = app.invoke(None, config=thread_config, metadata={"thread_id": prev_thread_id})
         else:
             result = app.invoke(
                 {
@@ -159,8 +170,11 @@ def main():
                     "last_agent": "",
                     "editor_iteration": 0,
                     "factchecker_iteration": 0,
+                    "research_output": "",
+                    "swarm_output": "",
                 },
                 config=thread_config,
+                metadata={"thread_id": run_id},
             )
     except KeyboardInterrupt:
         logger.warning("Interrupted by user. Exiting...")
@@ -175,11 +189,26 @@ def main():
     with open(pipeline_filename, "w", encoding="utf-8") as f:
         json.dump(serializable_result, f, indent=2, ensure_ascii=False)
 
+    if result.get("research_output"):
+        content = result["research_output"]
+        with open(research_filename, "w", encoding="utf-8") as f:
+            f.write(content)
+        save_docx(research_filename.with_suffix(".docx"), content)
+        logger.info("Research output saved to: %s", research_filename)
+
+    if result.get("swarm_output"):
+        content = result["swarm_output"]
+        with open(swarm_filename, "w", encoding="utf-8") as f:
+            f.write(content)
+        save_docx(swarm_filename.with_suffix(".docx"), content)
+        logger.info("Swarm output saved to: %s", swarm_filename)
+
     if result.get("drafts"):
         final_script = result["drafts"][-1]
         show_final_script(final_script)
         with open(script_filename, "w", encoding="utf-8") as f:
             f.write(final_script)
+        save_docx(script_filename.with_suffix(".docx"), final_script)
         logger.info("Final script saved to: %s", script_filename)
 
 
