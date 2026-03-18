@@ -1,11 +1,11 @@
 from langchain_examples.config import agents_config, settings
 
-from ..tools.agent_tools import scrape_article, web_search, search_verstka_texts
+from ..tools.agent_tools import scrape_article, web_search_tavily, search_verstka_texts
 from .builder import build_agent
 from .models import EditorOutput, WriterOutput
 
-factchecker_tools = [web_search]
-researcher_tools = [web_search, scrape_article, search_verstka_texts]
+factchecker_tools = [web_search_tavily]
+researcher_tools = [web_search_tavily, scrape_article, search_verstka_texts]
 all_tools = factchecker_tools + researcher_tools
 tools_by_name = {tool.name: tool for tool in all_tools}
 
