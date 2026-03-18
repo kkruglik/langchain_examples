@@ -7,6 +7,7 @@ from langchain_examples.rag.retrieval.query import rag_query
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from tavily import TavilyClient
 from langchain_core.tools import tool
 
 from langchain_examples.logging import get_logger
@@ -163,6 +164,8 @@ def scrape_article(url: str) -> str:
         if not content:
             return f"Error: Could not extract content from {url}"
 
+        if len(content) > 20_000:
+            content = content[:20_000] + "\n\n[...truncated]"
         return f"Source: {url}\n\n{content}"
 
     except httpx.HTTPStatusError as e:
@@ -174,8 +177,8 @@ def scrape_article(url: str) -> str:
 
 
 @tool
-def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web for information.
+def web_search_ddg(query: str, max_results: int = 5) -> str:
+    """Search the web using DuckDuckGo.
 
     Args:
         query: Search query string
@@ -184,7 +187,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     Returns:
         Search results as formatted text
     """
-    logger.info("Tool call: web_search(%s)", query)
+    logger.info("Tool call: web_search_ddg(%s)", query)
     max_results = min(max_results, 10)
 
     try:
@@ -192,18 +195,44 @@ def web_search(query: str, max_results: int = 5) -> str:
         if not results:
             return f"No results found for: {query}"
 
-        formatted = []
-        for r in results:
-            formatted.append(f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}\n")
+        formatted = [f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}\n" for r in results]
         return "\n---\n".join(formatted)
 
     except Exception as e:
-        logger.error("web_search failed: %s", e)
+        logger.error("web_search_ddg failed: %s", e)
         return f"Error: Search failed for '{query}'. Try a different query or continue without this search."
 
 
 @tool
-def search_verstka_texts(query: str, max_results: int = 5) -> str:
+def web_search_tavily(query: str, max_results: int = 5) -> str:
+    """Search the web using Tavily — optimized for AI agents, returns clean and relevant results.
+
+    Args:
+        query: Search query string
+        max_results: Maximum number of results to return (default 5, max 10)
+
+    Returns:
+        Search results as formatted text
+    """
+    logger.info("Tool call: web_search_tavily(%s)", query)
+    max_results = min(max_results, 10)
+
+    try:
+        response = TavilyClient().search(query, max_results=max_results)
+        results = response.get("results", [])
+        if not results:
+            return f"No results found for: {query}"
+
+        formatted = [f"Title: {r['title']}\nURL: {r['url']}\nSnippet: {r['content']}\n" for r in results]
+        return "\n---\n".join(formatted)
+
+    except Exception as e:
+        logger.error("web_search_tavily failed: %s", e)
+        return f"Error: Search failed for '{query}'. Try a different query or continue without this search."
+
+
+@tool
+def search_verstka_texts(query: str, max_results: int = 5, exclude_urls: list[str] | None = None) -> str:
     """Search Verstka.media internal knowledge base for relevant articles and news.
 
     Use this tool when you need background context, prior coverage, or factual information
@@ -212,13 +241,14 @@ def search_verstka_texts(query: str, max_results: int = 5) -> str:
     Args:
         query: Natural language search query ONLY in Russian
         max_results: Number of top results to return (default 5)
+        exclude_urls: Optional list of article URLs to exclude from results
 
     Returns:
         JSON string with a list of results, each with keys: title, date, category, url, text
     """
     logger.info("Tool call: search_verstka_texts(%s)", query)
 
-    points = rag_query(query, max_results)
+    points = rag_query(query, max_results, exclude_urls=exclude_urls)
     results = [
         {
             "title": p.payload.get("title", ""),
