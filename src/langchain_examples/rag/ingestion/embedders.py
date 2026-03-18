@@ -18,13 +18,13 @@ bm25_embedding_model = SparseTextEmbedding("Qdrant/bm25")
 # )
 
 
-@traceable(name="apply_dense_embeddings")
+@traceable(name="apply_dense_embeddings", run_type="retriever")
 def apply_dense_embeddings(documents: list[Document]) -> list[list[float]]:
     logger.info(f"Embedding {len(documents)} chunks")
     return dense_embeddings.embed_documents([doc.page_content for doc in documents])
 
 
-@traceable(name="apply_bm25_embeddings")
+@traceable(name="apply_bm25_embeddings", run_type="retriever")
 def apply_bm25_embeddings(documents: list[Document]) -> list[SparseEmbedding]:
     logger.info(f"BM25 embedding {len(documents)} chunks")
     return list(bm25_embedding_model.embed([doc.page_content for doc in documents]))

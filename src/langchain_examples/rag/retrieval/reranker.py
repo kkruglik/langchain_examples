@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 _model = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
 
 
-@traceable(name="rerank")
+@traceable(name="rerank", run_type="retriever")
 def rerank(query: str, points: list[ScoredPoint], top_n: int = 5) -> list[ScoredPoint]:
     if not points:
         return points
