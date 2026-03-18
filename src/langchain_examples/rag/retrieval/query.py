@@ -11,8 +11,13 @@ from .reranker import rerank
 logger = logging.getLogger(__name__)
 
 
-@traceable(name="rag_query")
-def rag_query(text: str, k: int = 5, filters: dict | None = None) -> list[ScoredPoint]:
+@traceable(name="rag_query", run_type="retriever")
+def rag_query(
+    text: str,
+    k: int = 5,
+    filters: dict | None = None,
+    exclude_urls: list[str] | None = None,
+) -> list[ScoredPoint]:
     dense_vector = dense_embeddings.embed_query(text)
     bm25_vector = next(bm25_embedding_model.query_embed(text))
     bm25_sparse = models.SparseVector(
@@ -20,5 +25,5 @@ def rag_query(text: str, k: int = 5, filters: dict | None = None) -> list[Scored
         values=bm25_vector.values.tolist(),
     )
 
-    candidates = search(dense_vector, bm25_sparse, k=k * 4, filters=filters)
+    candidates = search(dense_vector, bm25_sparse, k=k * 4, filters=filters, exclude_urls=exclude_urls)
     return rerank(text, candidates, top_n=k)
