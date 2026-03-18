@@ -25,7 +25,7 @@ agents:
       provider: openai
       name: gpt-5-mini
       temperature: 0.3
-    prompt_path: prompts/researcher/v1.md
+    prompt_path: prompts/researcher/v2.md
 
   swarm_writer:
     model:
