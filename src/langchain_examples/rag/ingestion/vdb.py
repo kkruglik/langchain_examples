@@ -59,6 +59,12 @@ def create_collection():
             field_schema=PayloadSchemaType.KEYWORD,
         )
 
+        client.create_payload_index(
+            collection_name=config.qdrant.collection_name,
+            field_name="url",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+
 
 create_collection()
 
@@ -91,17 +97,26 @@ def upsert(
     return False
 
 
-@traceable(name="rag_search")
+def article_ingested(url: str) -> bool:
+    result = client.count(
+        collection_name=config.qdrant.collection_name,
+        count_filter=Filter(must=[FieldCondition(key="url", match=MatchValue(value=url))]),
+        exact=True,
+    )
+    return result.count > 0
+
+
+@traceable(name="rag_search", run_type="retriever")
 def search(
     dense_vector: list[float],
     bm25_vector: models.SparseVector,
     k: int,
     filters: dict | None = None,
+    exclude_urls: list[str] | None = None,
 ) -> list[ScoredPoint]:
-    query_filter = None
-    if filters:
-        conditions = [FieldCondition(key=key, match=MatchValue(value=val)) for key, val in filters.items()]
-        query_filter = Filter(must=conditions)
+    must = [FieldCondition(key=key, match=MatchValue(value=val)) for key, val in filters.items()] if filters else []
+    must_not = [FieldCondition(key="url", match=MatchValue(value=url)) for url in exclude_urls] if exclude_urls else []
+    query_filter = Filter(must=must, must_not=must_not) if (must or must_not) else None
 
     result = client.query_points(
         collection_name=config.qdrant.collection_name,
