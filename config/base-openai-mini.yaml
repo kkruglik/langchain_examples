@@ -33,3 +33,11 @@ agents:
       name: gpt-5-mini
       temperature: 0.8
     prompt_path: prompts/swarm_writer/v1.md
+
+  illustrator:
+    model:
+      provider: openai
+      name: gpt-5-mini-2025-08-07
+      temperature: 0.4
+    prompt_path: prompts/illustrator/v1.md
+    image_model: imagen-4.0-generate-001
