@@ -1,8 +1,8 @@
 from langchain_examples.config import agents_config, settings
 
-from ..tools.agent_tools import scrape_article, web_search_tavily, search_verstka_texts
-from .builder import build_agent
-from .models import EditorOutput, WriterOutput
+from langchain_examples.agents.builder import build_agent
+from langchain_examples.agents.models import EditorOutput, ImagePromptsOutput, WriterOutput
+from langchain_examples.tools.agent_tools import scrape_article, search_verstka_texts, web_search_tavily
 
 factchecker_tools = [web_search_tavily]
 researcher_tools = [web_search_tavily, scrape_article, search_verstka_texts]
@@ -14,3 +14,4 @@ editor_llm = build_agent(agents_config.editor, settings).with_structured_output(
 factchecker_llm = build_agent(agents_config.factchecker, settings).bind_tools(factchecker_tools)
 researcher_llm = build_agent(agents_config.researcher, settings).bind_tools(researcher_tools)
 swarm_writer_llm = build_agent(agents_config.swarm_writer, settings)
+illustrator_llm = build_agent(agents_config.illustrator, settings).with_structured_output(ImagePromptsOutput)
