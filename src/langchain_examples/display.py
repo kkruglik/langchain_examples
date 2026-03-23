@@ -114,7 +114,7 @@ def show_config(config_file: str, agents_config) -> None:
     console.print(f"[bold cyan]Config:[/bold cyan] {config_file}")
     console.print()
 
-    for agent_name in ["writer", "editor", "factchecker", "researcher", "swarm_writer"]:
+    for agent_name in ["writer", "editor", "factchecker", "researcher", "swarm_writer", "illustrator"]:
         agent_cfg = getattr(agents_config, agent_name)
         model = agent_cfg.model
         console.print(
