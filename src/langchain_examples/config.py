@@ -50,6 +50,12 @@ class AgentConfig(BaseModel):
         return path.read_text(encoding="utf-8").strip()
 
 
+class IllustratorConfig(AgentConfig):
+    """Config for the illustrator agent: LLM prompt generation + image generator params."""
+
+    image_model: str = "imagen-4.0-generate-001"
+
+
 class AgentsConfig(BaseModel):
     """All agent configs. Nested under 'agents' key in YAML."""
 
@@ -58,6 +64,7 @@ class AgentsConfig(BaseModel):
     factchecker: AgentConfig
     researcher: AgentConfig
     swarm_writer: AgentConfig
+    illustrator: IllustratorConfig
 
 
 class Config(BaseSettings):
