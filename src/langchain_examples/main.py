@@ -14,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from .agents.nodes import (
     editor_node,
     factchecker_node,
+    illustrator_node,
     researcher_node,
     swarm_writer_node,
     tool_node,
@@ -70,6 +71,7 @@ def main():
     graph.add_node("writer_agent", writer_node)
     graph.add_node("editor_agent", editor_node)
     graph.add_node("factchecker_agent", factchecker_node)
+    graph.add_node("illustrator_agent", illustrator_node)
     graph.add_node("tools", tool_node)
 
     graph.add_edge(START, "user_input_node")
@@ -103,8 +105,10 @@ def main():
     graph.add_conditional_edges(
         "factchecker_agent",
         route_after_factchecker,
-        {"verified": "user_input_node", "rejected": "writer_agent", "tool_use": "tools"},
+        {"verified": "illustrator_agent", "rejected": "writer_agent", "tool_use": "tools"},
     )
+
+    graph.add_edge("illustrator_agent", "user_input_node")
 
     graph.add_conditional_edges(
         "tools",
@@ -172,6 +176,8 @@ def main():
                     "factchecker_iteration": 0,
                     "research_output": "",
                     "swarm_output": "",
+                    "run_dir": str(run_dir),
+                    "image_paths": [],
                 },
                 config=thread_config,
                 metadata={"thread_id": run_id},
@@ -210,6 +216,10 @@ def main():
             f.write(final_script)
         save_docx(script_filename.with_suffix(".docx"), final_script)
         logger.info("Final script saved to: %s", script_filename)
+
+    if result.get("image_paths"):
+        for img_path in result["image_paths"]:
+            logger.info("Image saved to: %s", img_path)
 
 
 if __name__ == "__main__":
