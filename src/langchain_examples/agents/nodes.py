@@ -1,22 +1,26 @@
 import contextvars
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from langsmith import traceable
-from langchain_examples.agents.utils import filter_messages
-import re
-
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 from langchain_examples.agents.agents import (
     editor_llm,
     factchecker_llm,
+    illustrator_llm,
     researcher_llm,
     swarm_writer_llm,
     tools_by_name,
     writer_llm,
 )
+from langchain_examples.agents.builder import generate_image
+from langchain_examples.agents.models import EditorOutput, WriterOutput
 from langchain_examples.agents.state import PipelineState
+from langchain_examples.agents.utils import analyze_script, filter_messages
+from langchain_examples.config import agents_config, settings
 from langchain_examples.display import (
     processing,
     show_agent_output,
@@ -25,11 +29,7 @@ from langchain_examples.display import (
     show_user_prompt,
 )
 from langchain_examples.logging import get_logger
-from langchain_examples.agents.utils import analyze_script
 from langchain_examples.tools.agent_tools import scrape_article, scrape_telegram_post
-
-from .models import EditorOutput, WriterOutput
-from ..config import agents_config
 
 logger = get_logger(__name__)
 
@@ -453,7 +453,9 @@ def swarm_writer_node(state: PipelineState) -> dict:
     chain = prompt | swarm_writer_llm
 
     def run_angle(angle: str) -> tuple[str, str]:
-        messages = base_messages + [HumanMessage(content=f"Your assigned angle is: {angle}. Write your ideas/draft now.")]
+        messages = base_messages + [
+            HumanMessage(content=f"Your assigned angle is: {angle}. Write your ideas/draft now.")
+        ]
         response = chain.invoke({"messages": messages})
         return angle, _ensure_str(response.content)
 
@@ -488,4 +490,54 @@ def swarm_writer_node(state: PipelineState) -> dict:
         "messages": [swarm_message],
         "last_agent": "swarm",
         "swarm_output": summary,
+    }
+
+
+def illustrator_node(state: PipelineState) -> dict:
+    """Generate image prompts via LLM, then generate each image and save to run folder."""
+    _log_state(state, "illustrator")
+
+    script = state["drafts"][-1] if state["drafts"] else ""
+    user_request = next(
+        (m.content for m in state["messages"] if isinstance(m, HumanMessage)),
+        "",
+    )
+
+    prompt_messages = [
+        SystemMessage(content=agents_config.illustrator.prompt),
+        HumanMessage(content=f"User request: {user_request}\n\nScript:\n{script}"),
+    ]
+
+    with processing("illustrator (prompts)"):
+        prompts_output = illustrator_llm.invoke(prompt_messages)
+
+    logger.info("Illustrator: received %d prompts", len(prompts_output.images))
+
+    images_dir = Path(state["run_dir"]) / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    saved_paths: list[str] = []
+
+    for img_prompt in prompts_output.images:
+        logger.info("Illustrator: generating '%s' (%s)", img_prompt.label, img_prompt.aspect_ratio)
+        with processing(f"illustrator ({img_prompt.label})"):
+            img_bytes = generate_image(
+                model=agents_config.illustrator.image_model,
+                prompt=img_prompt.prompt,
+                aspect_ratio=img_prompt.aspect_ratio,
+                api_key=settings.google_api_key,
+            )
+
+        img_path = images_dir / f"{img_prompt.label}.png"
+        img_path.write_bytes(img_bytes)
+        saved_paths.append(str(img_path))
+        logger.info("Illustrator: saved '%s' to %s", img_prompt.label, img_path)
+
+    labels = [p.label for p in prompts_output.images]
+    summary = f"Generated {len(saved_paths)} images: {', '.join(labels)}"
+    show_agent_output("illustrator", summary)
+
+    return {
+        "messages": [AIMessage(content=summary, name="illustrator")],
+        "image_paths": saved_paths,
     }
