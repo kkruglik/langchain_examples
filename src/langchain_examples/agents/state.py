@@ -17,3 +17,5 @@ class PipelineState(TypedDict):
     factchecker_iteration: int  # How many times factchecker has reviewed (max 3 in conditional graph)
     research_output: str
     swarm_output: str
+    run_dir: str  # Path to current run folder for saving artifacts
+    image_paths: Annotated[list[str], add]  # Paths to generated images
