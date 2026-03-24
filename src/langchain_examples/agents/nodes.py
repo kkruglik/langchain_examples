@@ -17,7 +17,7 @@ from langchain_examples.agents.agents import (
     writer_llm,
 )
 from langchain_examples.agents.builder import generate_image
-from langchain_examples.agents.models import EditorOutput, WriterOutput
+from langchain_examples.agents.models import EditorOutput, ImagePrompt, WriterOutput
 from langchain_examples.agents.state import PipelineState
 from langchain_examples.agents.utils import analyze_script, filter_messages
 from langchain_examples.config import agents_config, settings
@@ -108,7 +108,8 @@ URL_PATTERN = re.compile(
 
 
 def normalize_url(url: str) -> str:
-    """Add https:// if missing."""
+    """Add https:// if missing and strip trailing punctuation."""
+    url = url.rstrip(").,;]>\"'")
     if not url.startswith(("http://", "https://")):
         return "https://" + url
     return url
@@ -152,16 +153,15 @@ def user_node(state: PipelineState) -> dict:
         return {"user_approved": True}
 
     article_content = []
-    urls = URL_PATTERN.findall(user_input)
+    urls = list(dict.fromkeys(normalize_url(u) for u in URL_PATTERN.findall(user_input)))
 
     if urls:
         for url in urls:
-            normalized = normalize_url(url)
             with processing("scraping"):
-                if "t.me/" in normalized:
-                    result = scrape_telegram_post.invoke({"url": normalized})
+                if "t.me/" in url:
+                    result = scrape_telegram_post.invoke({"url": url})
                 else:
-                    result = scrape_article.invoke({"url": normalized})
+                    result = scrape_article.invoke({"url": url})
             article_content.append(result)
 
     # First iteration without URLs - text is the content
@@ -517,24 +517,37 @@ def illustrator_node(state: PipelineState) -> dict:
     images_dir.mkdir(exist_ok=True)
 
     saved_paths: list[str] = []
+    failed_labels: list[str] = []
 
-    for img_prompt in prompts_output.images:
-        logger.info("Illustrator: generating '%s' (%s)", img_prompt.label, img_prompt.aspect_ratio)
-        with processing(f"illustrator ({img_prompt.label})"):
-            img_bytes = generate_image(
-                model=agents_config.illustrator.image_model,
-                prompt=img_prompt.prompt,
-                aspect_ratio=img_prompt.aspect_ratio,
-                api_key=settings.google_api_key,
-            )
+    def generate_single_image(img_prompt: ImagePrompt) -> tuple[str, bytes]:
+        return img_prompt.label, generate_image(
+            model=agents_config.illustrator.image_model,
+            prompt=img_prompt.prompt,
+            aspect_ratio=img_prompt.aspect_ratio,
+            api_key=settings.google_api_key,
+        )
 
-        img_path = images_dir / f"{img_prompt.label}.png"
-        img_path.write_bytes(img_bytes)
-        saved_paths.append(str(img_path))
-        logger.info("Illustrator: saved '%s' to %s", img_prompt.label, img_path)
+    with ThreadPoolExecutor(max_workers=len(prompts_output.images)) as executor:
+        futures = {
+            executor.submit(contextvars.copy_context().run, generate_single_image, img_prompt): img_prompt
+            for img_prompt in prompts_output.images
+        }
+        for future in as_completed(futures):
+            img_prompt = futures[future]
+            try:
+                label, img_bytes = future.result()
+                img_path = images_dir / f"{label}.png"
+                img_path.write_bytes(img_bytes)
+                saved_paths.append(str(img_path))
+                logger.info("Illustrator: saved '%s' to %s", label, img_path)
+            except Exception as e:
+                failed_labels.append(img_prompt.label)
+                logger.error("Illustrator: failed to generate '%s': %s", img_prompt.label, e)
 
-    labels = [p.label for p in prompts_output.images]
-    summary = f"Generated {len(saved_paths)} images: {', '.join(labels)}"
+    saved_labels = [Path(p).stem for p in saved_paths]
+    summary = f"Generated {len(saved_paths)}/{len(prompts_output.images)} images: {', '.join(saved_labels)}"
+    if failed_labels:
+        summary += f" (failed: {', '.join(failed_labels)})"
     show_agent_output("illustrator", summary)
 
     return {
