@@ -39,7 +39,7 @@ class ImagePrompt(BaseModel):
 
     label: str = Field(description="Short snake_case filename label, e.g. 'cover', 'protest_scene', 'chip_closeup'.")
     prompt: str = Field(description="Full descriptive image prompt in English. A narrative paragraph, not a keyword list. Max 480 tokens.")
-    aspect_ratio: str = Field(default="16:9", description="Aspect ratio for this image. Default '16:9'. Use '9:16' for vertical, '1:1' for square.")
+    aspect_ratio: str = Field(description="Aspect ratio for this image. Default '16:9'. Use '9:16' for vertical, '1:1' for square.")
 
 
 class ImagePromptsOutput(BaseModel):
