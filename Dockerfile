@@ -7,7 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
-RUN uv lock && uv sync --no-dev
+RUN uv lock && uv venv .venv && uv sync --no-dev --python .venv/bin/python
 
 
 # Stage 2: runtime
