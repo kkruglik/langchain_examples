@@ -21,13 +21,14 @@ def rag_pipeline() -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
             logging.FileHandler(logs_dir / f"rag_pipeline_{timestamp}.log", encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )
+    logging.getLogger("langchain_examples").setLevel(logging.INFO)
 
     batch_size = config.batch_size
     collection_path = Path(config.collection_path)
@@ -41,14 +42,13 @@ def rag_pipeline() -> None:
         record = load_json(path)
         url = record["url"]
         if article_ingested(url):
-            logger.info("Skipped (already ingested): %s", url)
             total_skipped += 1
             continue
 
         chunks = chunk_text(record)
         batch.extend(chunks)
         total_added += 1
-        logger.info("Queued for ingestion: %s (%d chunks)", url, len(chunks))
+        logger.debug("Queued for ingestion: %s (%d chunks)", url, len(chunks))
 
         if len(batch) >= batch_size:
             dense_vectors = apply_dense_embeddings(batch[:batch_size])
@@ -56,7 +56,6 @@ def rag_pipeline() -> None:
             upsert(batch[:batch_size], dense_vectors, bm25_vectors)
             total_upserted += batch_size
             batch = batch[batch_size:]
-            logger.info("Upserted %d chunks so far", total_upserted)
 
     if batch:
         dense_vectors = apply_dense_embeddings(batch)
