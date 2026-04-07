@@ -21,13 +21,6 @@ from langchain_examples.agents.models import EditorOutput, ImagePrompt, WriterOu
 from langchain_examples.agents.state import PipelineState
 from langchain_examples.agents.utils import analyze_script, filter_messages
 from langchain_examples.config import agents_config, settings
-from langchain_examples.display import (
-    processing,
-    show_agent_output,
-    show_draft,
-    show_tool_call,
-    show_user_prompt,
-)
 from langchain_examples.logging import get_logger
 from langchain_examples.tools.agent_tools import scrape_article, scrape_telegram_post
 
@@ -128,11 +121,10 @@ def tool_node(state: PipelineState) -> dict:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
 
-        show_tool_call(tool_name, tool_args)
+        logger.info(f"Tool call: {tool_name} args={tool_args}")
 
         tool = tools_by_name[tool_name]
-        with processing("tool"):
-            observation = tool.invoke(tool_args)
+        observation = tool.invoke(tool_args)
 
         result_messages.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
 
@@ -145,9 +137,9 @@ def user_node(state: PipelineState) -> dict:
     has_drafts = bool(state["drafts"])
 
     if has_drafts:
-        show_draft(state["drafts"][-1], state["iteration"])
+        logger.info(f"Current draft (iteration {state['iteration']}):\n{state['drafts'][-1]}")
 
-    user_input = show_user_prompt(has_drafts)
+    user_input = input("Feedback: " if has_drafts else "Enter text or URL: ").strip()
 
     if user_input.lower() in ["exit", "quit", "stop", "bye", "done"]:
         return {"user_approved": True}
@@ -157,11 +149,10 @@ def user_node(state: PipelineState) -> dict:
 
     if urls:
         for url in urls:
-            with processing("scraping"):
-                if "t.me/" in url:
-                    result = scrape_telegram_post.invoke({"url": url})
-                else:
-                    result = scrape_article.invoke({"url": url})
+            if "t.me/" in url:
+                result = scrape_telegram_post.invoke({"url": url})
+            else:
+                result = scrape_article.invoke({"url": url})
             article_content.append(result)
 
     # First iteration without URLs - text is the content
@@ -226,13 +217,12 @@ def writer_node(state: PipelineState) -> dict:
     prompt = ChatPromptTemplate([("system", agents_config.writer.prompt), ("placeholder", "{messages}")])
     chain = prompt | writer_llm
 
-    with processing("writer"):
-        response: WriterOutput = chain.invoke({"messages": messages})
+    response: WriterOutput = chain.invoke({"messages": messages})
 
-    show_agent_output("writer", response.reasoning)
+    logger.info(f"[writer] Reasoning: {response.reasoning}")
 
     new_iteration = state["iteration"] + 1
-    show_draft(response.draft, new_iteration)
+    logger.info(f"[writer] Draft v{new_iteration}:\n{response.draft}")
 
     writer_message = AIMessage(content=response.draft, name="writer")
 
@@ -279,13 +269,11 @@ def editor_node(state: PipelineState) -> dict:
 
     chain = prompt | editor_llm
 
-    with processing("editor"):
-        response: EditorOutput = chain.invoke({"messages": messages})
+    response: EditorOutput = chain.invoke({"messages": messages})
 
-    logger.debug("[editor] Verdict: approved=%s, feedback_length=%d", response.approved, len(response.feedback))
+    logger.info(f"[editor] Feedback (approved={response.approved}): {response.feedback}")
 
     feedback_message = AIMessage(content=response.feedback, name="editor")
-    show_agent_output("editor", response.feedback, approved=response.approved)
 
     return {
         "messages": [feedback_message],
@@ -334,8 +322,7 @@ def factchecker_node(state: PipelineState) -> dict:
 
     chain = prompt | factchecker_llm
 
-    with processing("factchecker"):
-        response = chain.invoke({"messages": messages})
+    response = chain.invoke({"messages": messages})
 
     if response.tool_calls:
         response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="factchecker")
@@ -344,10 +331,9 @@ def factchecker_node(state: PipelineState) -> dict:
 
     content = _ensure_str(response.content)
     approved = "APPROVED" in content.upper() and "REJECTED" not in content.upper()
-    logger.debug("[factchecker] Verdict: %s, content_length=%d", "APPROVED" if approved else "REJECTED", len(content))
+    logger.info(f"[factchecker] Verdict: {'APPROVED' if approved else 'REJECTED'}, content_length={len(content)}")
 
     feedback_message = AIMessage(content=content, name="factchecker")
-    show_agent_output("factchecker", content, approved=approved)
 
     return {
         "messages": [feedback_message],
@@ -378,8 +364,7 @@ def researcher_node(state: PipelineState) -> dict:
     prompt = ChatPromptTemplate([("system", agents_config.researcher.prompt), ("placeholder", "{messages}")])
     chain = prompt | researcher_llm
 
-    with processing("researcher"):
-        response = chain.invoke({"messages": messages})
+    response = chain.invoke({"messages": messages})
 
     if response.tool_calls:
         response = AIMessage(content=_ensure_str(response.content), tool_calls=response.tool_calls, name="researcher")
@@ -390,8 +375,8 @@ def researcher_node(state: PipelineState) -> dict:
         }
 
     content = _ensure_str(response.content)
+    logger.info(f"[researcher] Output: {content}")
     research_message = AIMessage(content=content, name="researcher")
-    show_agent_output("researcher", content)
 
     return {
         "messages": [research_message],
@@ -477,14 +462,12 @@ def swarm_writer_node(state: PipelineState) -> dict:
         HumanMessage(content=f"Вот сырые идеи от креативщиков:\n\n{combined_raw}"),
     ]
 
-    with processing("swarm"):
-        summary_response = swarm_writer_llm.invoke(summarize_messages)
+    summary_response = swarm_writer_llm.invoke(summarize_messages)
 
     summary = _ensure_str(summary_response.content)
-    logger.info("Swarm: summary ready, %d chars", len(summary))
+    logger.info(f"[swarm] Summary ({len(summary)} chars): {summary}")
 
     swarm_message = AIMessage(content=summary, name="swarm")
-    show_agent_output("swarm", summary)
 
     return {
         "messages": [swarm_message],
@@ -508,8 +491,7 @@ def illustrator_node(state: PipelineState) -> dict:
         HumanMessage(content=f"User request: {user_request}\n\nScript:\n{script}"),
     ]
 
-    with processing("illustrator (prompts)"):
-        prompts_output = illustrator_llm.invoke(prompt_messages)
+    prompts_output = illustrator_llm.invoke(prompt_messages)
 
     logger.info("Illustrator: received %d prompts", len(prompts_output.images))
 
@@ -548,7 +530,7 @@ def illustrator_node(state: PipelineState) -> dict:
     summary = f"Generated {len(saved_paths)}/{len(prompts_output.images)} images: {', '.join(saved_labels)}"
     if failed_labels:
         summary += f" (failed: {', '.join(failed_labels)})"
-    show_agent_output("illustrator", summary)
+    logger.info(f"[illustrator] {summary}")
 
     return {
         "messages": [AIMessage(content=summary, name="illustrator")],

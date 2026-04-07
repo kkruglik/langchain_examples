@@ -381,7 +381,7 @@ def scrape_category(category: str, incremental: bool, data_dir: Path, workers: i
     seen_path = meta_dir / f"seen_urls_{category}.txt"
 
     seen_urls = load_seen_urls(seen_path) if incremental else set()
-    logger.info("Category=%s incremental=%s seen=%d", category, incremental, len(seen_urls))
+    logger.debug("Category=%s incremental=%s seen=%d", category, incremental, len(seen_urls))
 
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
         stubs = get_article_urls(client, category, seen_urls, incremental)
@@ -416,7 +416,7 @@ def scrape_category(category: str, incremental: bool, data_dir: Path, workers: i
             out_path = out_dir / f"{url_hash}.json"
             out_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
             save_seen_url(seen_path, url)
-            logger.info("Scraped: %s", url)
+            logger.debug("Scraped: %s", url)
             scraped_count += 1
 
     logger.info("Category=%s done: scraped=%d errors=%d", category, scraped_count, error_count)
@@ -459,13 +459,14 @@ def main() -> None:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[
             logging.FileHandler(logs_dir / f"verstka_scraper_{timestamp}.log", encoding="utf-8"),
             logging.StreamHandler(),
         ],
     )
+    logging.getLogger("langchain_examples").setLevel(logging.INFO)
 
     categories = list(CATEGORIES.keys()) if args.category == "all" else [args.category]
     total = 0

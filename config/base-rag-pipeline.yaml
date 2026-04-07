@@ -7,7 +7,7 @@ splitter:
   chunk_overlap: 200
 
 qdrant:
-  url: http://localhost:6333
+  url: http://qdrant:6333
   collection_name: documents
   vector_size: 1536
   distance: Cosine

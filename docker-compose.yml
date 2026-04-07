@@ -1,7 +1,80 @@
 services:
+  slack_bot:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - hf_cache:/app/.cache/huggingface
+      - fastembed_cache:/app/.cache/fastembed
+    depends_on:
+      qdrant:
+        condition: service_started
+      ingestor_init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  ingestor_init:
+    build: .
+    command: >
+      sh -c "python -m langchain_examples.rag.ingestion.scraper &&
+             python -m langchain_examples.rag.ingestion"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - fastembed_cache:/app/.cache/fastembed
+    depends_on:
+      qdrant:
+        condition: service_started
+    restart: "no"
+
+  ingestor:
+    build: .
+    command: >
+      sh -c "sleep 86400; while true; do
+        python -m langchain_examples.rag.ingestion.scraper &&
+        python -m langchain_examples.rag.ingestion;
+        sleep 86400;
+      done"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - fastembed_cache:/app/.cache/fastembed
+    depends_on:
+      ingestor_init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
+    image: qdrant/qdrant:v1.17.1
     volumes:
       - ./data/qdrant:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+volumes:
+  hf_cache:
+  fastembed_cache:

@@ -80,7 +80,11 @@ class Config(BaseSettings):
     openai_api_key: Annotated[str | None, Field(default=None, alias="OPENAI_API_KEY")]
     anthropic_api_key: Annotated[str | None, Field(default=None, alias="ANTHROPIC_API_KEY")]
     google_api_key: Annotated[str | None, Field(default=None, alias="GOOGLE_API_KEY")]
+    slack_bot_token: Annotated[str | None, Field(default=None, alias="SLACK_BOT_TOKEN")]
+    slack_app_token: Annotated[str | None, Field(default=None, alias="SLACK_APP_TOKEN")]
     agents: AgentsConfig
+
+    max_workers: int = 10
 
     @classmethod
     def settings_customise_sources(

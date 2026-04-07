@@ -7,20 +7,26 @@ DEFAULT_LOG_FILE = Path("data/app.log")
 
 
 def setup_logging(level: int = logging.DEBUG, log_file: Path | None = None) -> None:
-    """Configure logging to file only."""
+    """Configure logging to stdout and file."""
     log_path = log_file or DEFAULT_LOG_FILE
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
 
     app_logger = logging.getLogger("langchain_examples")
     app_logger.setLevel(level)
-    app_logger.addHandler(handler)
+    app_logger.addHandler(file_handler)
+    app_logger.addHandler(stream_handler)
 
     # Third-party loggers stay quiet
     logging.root.setLevel(logging.WARNING)
-    logging.root.addHandler(handler)
+    logging.root.addHandler(file_handler)
 
 
 def get_logger(name: str) -> logging.Logger:
