@@ -4,21 +4,21 @@ agents:
       provider: openai
       name: gpt-5.4-2026-03-05
       temperature: 0.7
-    prompt_path: prompts/writer/v4.md
+    prompt_path: prompts/writer/v5.md
 
   editor:
     model:
       provider: openai
       name: gpt-5.4-2026-03-05
       temperature: 0.7
-    prompt_path: prompts/editor/v2.md
+    prompt_path: prompts/editor/v3.md
 
   factchecker:
     model:
       provider: openai
       name: gpt-5.4-2026-03-05
       temperature: 0.1
-    prompt_path: prompts/factchecker/v2.md
+    prompt_path: prompts/factchecker/v3.md
 
   researcher:
     model:
